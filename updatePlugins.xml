@@ -1,5 +1,5 @@
 <plugins>
-  <plugin id="com.hyphentechnology.bitbucketcompanion" url="https://raw.githubusercontent.com/sashveer-ramjathan/bitbucket-companion-plugin/plugin-repo/bitbucket-companion-plugin-0.1.4.zip" version="0.1.4">
+  <plugin id="com.hyphentechnology.bitbucketcompanion" url="https://raw.githubusercontent.com/sashveer-ramjathan/bitbucket-companion-plugin/plugin-repo/bitbucket-companion-plugin-0.1.5.zip" version="0.1.5">
     <idea-version since-build="241"/>
   </plugin>
 </plugins>
