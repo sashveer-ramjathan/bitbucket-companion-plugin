@@ -46,6 +46,16 @@ data class BbComment(
     /** Non-null for an inline (per-line) comment; null for a general PR-level comment. */
     val inlinePath: String? = null,
 )
+data class BbCommit(
+    val hash: String,
+    val message: String,
+    val author: String,
+    val date: String,
+    val htmlUrl: String?,
+) {
+    /** First line of the (often multi-line) commit message. */
+    val summary: String get() = message.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: message.trim()
+}
 data class BbPipeline(val buildNumber: Int, val uuid: String, val stateName: String, val resultName: String?)
 data class BbPipelineStep(val uuid: String, val name: String, val stateName: String, val resultName: String?)
 
@@ -267,6 +277,21 @@ class BitbucketApiClient(
                     createdOn = c.get("created_on")?.asString ?: "",
                     raw = c.objOrNull("content")?.get("raw")?.asString ?: "",
                     inlinePath = c.objOrNull("inline")?.get("path")?.asString,
+                )
+            }.toList()
+
+    /** Commits that make up a PR, in the order Bitbucket returns them (newest first). */
+    fun listCommits(repoSlug: String, id: Long): List<BbCommit> =
+        paginate("$API/repositories/$workspace/$repoSlug/pullrequests/$id/commits?pagelen=50")
+            .map { c ->
+                BbCommit(
+                    hash = c.get("hash")?.asString ?: "?",
+                    message = c.get("message")?.asString ?: "",
+                    author = c.objOrNull("author")?.objOrNull("user")?.get("display_name")?.asString
+                        ?: c.objOrNull("author")?.get("raw")?.asString
+                        ?: "?",
+                    date = c.get("date")?.asString ?: "",
+                    htmlUrl = c.objOrNull("links")?.objOrNull("html")?.get("href")?.asString,
                 )
             }.toList()
 

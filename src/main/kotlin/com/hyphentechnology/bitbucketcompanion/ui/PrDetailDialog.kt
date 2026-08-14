@@ -1,6 +1,7 @@
 package com.hyphentechnology.bitbucketcompanion.ui
 
 import com.hyphentechnology.bitbucketcompanion.api.BbComment
+import com.hyphentechnology.bitbucketcompanion.api.BbCommit
 import com.hyphentechnology.bitbucketcompanion.api.BbDiffStatEntry
 import com.hyphentechnology.bitbucketcompanion.api.BbPullRequest
 import com.hyphentechnology.bitbucketcompanion.api.BitbucketApiClient
@@ -13,23 +14,25 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.table.JBTable
 import java.awt.BorderLayout
+import java.awt.Desktop
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.net.URI
 import javax.swing.Action
 import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
-import javax.swing.JSplitPane
 import javax.swing.table.DefaultTableModel
 
 /**
  * Full detail view for one PR: description, the list of changed files (each openable in
- * IntelliJ's own native side-by-side diff viewer), and the comment thread (view existing
- * comments, post a new general/top-level one).
+ * IntelliJ's own native side-by-side diff viewer), the commit history, and the comment thread
+ * (view existing comments, post a new general/top-level one).
  *
  * "View Diff" opens IntelliJ's diff viewer as its own top-level window via [DiffManager] rather
  * than embedding a diff panel in here - that's the platform's normal diff UI (syntax
@@ -50,9 +53,18 @@ class PrDetailDialog(
     private val filesTable = JBTable(filesTableModel)
     private var currentFiles: List<BbDiffStatEntry> = emptyList()
     private val filesStatusLabel = JBLabel(" ")
+
+    private val commitsColumns = arrayOf("Commit", "Message", "Author", "Date")
+    private val commitsTableModel = object : DefaultTableModel(commitsColumns, 0) {
+        override fun isCellEditable(row: Int, column: Int) = false
+    }
+    private val commitsTable = JBTable(commitsTableModel)
+    private var currentCommits: List<BbCommit> = emptyList()
+    private val commitsStatusLabel = JBLabel(" ")
+
     private val commentsStatusLabel = JBLabel(" ")
 
-    private val descriptionArea = JBTextArea(pr.description.orEmpty(), 5, 60).apply {
+    private val descriptionArea = JBTextArea(pr.description.orEmpty(), 4, 60).apply {
         isEditable = false
         lineWrap = true
         wrapStyleWord = true
@@ -73,6 +85,7 @@ class PrDetailDialog(
         setOKButtonText("Close")
         init()
         loadFiles()
+        loadCommits()
         loadComments()
     }
 
@@ -96,7 +109,16 @@ class PrDetailDialog(
         val filesPanel = JPanel(BorderLayout()).apply {
             add(filesToolbar, BorderLayout.NORTH)
             add(JBScrollPane(filesTable), BorderLayout.CENTER)
-            border = BorderFactory.createTitledBorder("Changed Files")
+        }
+
+        val commitsToolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+            add(JButton("Open in Browser").apply { addActionListener { openSelectedCommitInBrowser() } })
+            add(JButton("Refresh").apply { addActionListener { loadCommits() } })
+            add(commitsStatusLabel)
+        }
+        val commitsPanel = JPanel(BorderLayout()).apply {
+            add(commitsToolbar, BorderLayout.NORTH)
+            add(JBScrollPane(commitsTable), BorderLayout.CENTER)
         }
 
         val commentsToolbar = JPanel(BorderLayout()).apply {
@@ -107,11 +129,18 @@ class PrDetailDialog(
         val commentsPanel = JPanel(BorderLayout()).apply {
             add(JBScrollPane(commentsArea), BorderLayout.CENTER)
             add(commentsToolbar, BorderLayout.SOUTH)
-            border = BorderFactory.createTitledBorder("Comments")
         }
 
-        val filesAndComments = JSplitPane(JSplitPane.VERTICAL_SPLIT, filesPanel, commentsPanel).apply { resizeWeight = 0.5 }
-        val main = JSplitPane(JSplitPane.VERTICAL_SPLIT, descPanel, filesAndComments).apply { resizeWeight = 0.25 }
+        val tabs = JBTabbedPane().apply {
+            addTab("Changed Files", filesPanel)
+            addTab("Commits", commitsPanel)
+            addTab("Comments", commentsPanel)
+        }
+
+        val main = JPanel(BorderLayout()).apply {
+            add(descPanel, BorderLayout.NORTH)
+            add(tabs, BorderLayout.CENTER)
+        }
 
         return main.apply { preferredSize = Dimension(900, 700) }
     }
@@ -130,6 +159,37 @@ class PrDetailDialog(
             },
             onFailure = { e -> filesStatusLabel.text = "Error: ${e.message}" },
         )
+    }
+
+    private fun loadCommits() {
+        commitsStatusLabel.text = "Loading..."
+        BackgroundTasks.runBackground(
+            project,
+            "Loading Commits",
+            action = { client.listCommits(repoSlug, pr.id) },
+            onSuccess = { commits ->
+                currentCommits = commits
+                commitsTableModel.rowCount = 0
+                commits.forEach { commitsTableModel.addRow(arrayOf<Any>(it.hash.take(8), it.summary, it.author, it.date)) }
+                commitsStatusLabel.text = if (commits.isEmpty()) "No commits reported for this PR." else "${commits.size} commit(s)"
+            },
+            onFailure = { e -> commitsStatusLabel.text = "Error: ${e.message}" },
+        )
+    }
+
+    private fun openSelectedCommitInBrowser() {
+        val row = commitsTable.selectedRow
+        if (row < 0 || row >= currentCommits.size) {
+            BackgroundTasks.notifyError(project, "Select a commit first.")
+            return
+        }
+        val url = currentCommits[row].htmlUrl
+        if (url == null) {
+            BackgroundTasks.notifyError(project, "No URL available for this commit.")
+            return
+        }
+        runCatching { Desktop.getDesktop().browse(URI(url)) }
+            .onFailure { BackgroundTasks.notifyError(project, "Couldn't open browser: ${it.message}") }
     }
 
     private fun loadComments() {
