@@ -220,6 +220,10 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
             BackgroundTasks.notifyError(project, "Select a PR first.")
             return
         }
+        if (pr.state != "OPEN") {
+            BackgroundTasks.notifyError(project, "Only open PRs can be edited (PR #${pr.id} is ${pr.state.lowercase()}).")
+            return
+        }
         val repo = repoText()
         val client = BackgroundTasks.buildApiClient(project) ?: return
         BackgroundTasks.runBackground(
