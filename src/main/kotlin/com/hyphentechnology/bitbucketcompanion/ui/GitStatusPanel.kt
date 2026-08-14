@@ -2,6 +2,7 @@ package com.hyphentechnology.bitbucketcompanion.ui
 
 import com.hyphentechnology.bitbucketcompanion.git.GitOps
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketCredentials
+import com.hyphentechnology.bitbucketcompanion.settings.BitbucketOAuthClient
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsState
 import com.hyphentechnology.bitbucketcompanion.util.WrapLayout
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
@@ -48,15 +49,38 @@ class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
         }
     }
 
+    private data class GitAuth(val env: Map<String, String>, val extraConfig: List<String>)
+
     /**
-     * Bitbucket's credential.helper (see bb.py) resolves auth from a `$BB_TOKEN` env var at the
-     * moment git runs. That works from a shell that sources .bashrc, but IntelliJ - and every
-     * subprocess it spawns, including these - never does. Inject the same token the API calls
-     * already use so `git fetch`/`pull`/`push` authenticate without the user having to set a
-     * system-wide environment variable themselves.
+     * Bitbucket's credential.helper (see bb.py) resolves API-token auth from a `$BB_TOKEN` env
+     * var at the moment git runs. That works from a shell that sources .bashrc, but IntelliJ -
+     * and every subprocess it spawns, including these - never does. Inject the same secret the
+     * API calls already use so `git fetch`/`pull`/`push` authenticate without a system-wide env
+     * var.
+     *
+     * When signed in via Bitbucket (OAuth) instead, that global helper is wrong regardless - it
+     * hardcodes username=x-bitbucket-api-token-auth, but OAuth needs x-token-auth plus a token
+     * that rotates on refresh. Override credential.helper for just this invocation via `-c`
+     * instead of touching the user's real ~/.gitconfig.
+     *
+     * Network/blocking in OAuth mode (may refresh) - call only from a background thread.
      */
-    private fun gitEnv(): Map<String, String> =
-        BitbucketCredentials.getToken()?.takeIf { it.isNotBlank() }?.let { mapOf("BB_TOKEN" to it) } ?: emptyMap()
+    private fun gitAuth(): GitAuth {
+        val state = BitbucketSettingsState.getInstance().state
+        if (state.isOAuthSignedIn()) {
+            val accessToken = runCatching { BitbucketOAuthClient.currentAccessToken() }.getOrNull()
+                ?: return GitAuth(emptyMap(), emptyList())
+            return GitAuth(
+                env = mapOf("OAUTH_ACCESS_TOKEN" to accessToken),
+                extraConfig = listOf(
+                    "credential.https://bitbucket.org.helper=",
+                    "credential.https://bitbucket.org.helper=!f() { echo username=x-token-auth; echo \"password=\$OAUTH_ACCESS_TOKEN\"; }; f",
+                ),
+            )
+        }
+        val token = BitbucketCredentials.getToken()
+        return if (token.isNullOrBlank()) GitAuth(emptyMap(), emptyList()) else GitAuth(mapOf("BB_TOKEN" to token), emptyList())
+    }
 
     private var currentDir: File? =
         BitbucketSettingsState.getInstance().state.lastCloneDir.takeIf { it.isNotBlank() }?.let { File(it) }
@@ -108,10 +132,10 @@ class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
             project,
             "Checking Repo Status",
             action = {
-                val env = gitEnv()
+                val auth = gitAuth()
                 dir.listFiles { f -> f.isDirectory && File(f, ".git").isDirectory }
                     ?.sortedBy { it.name }
-                    ?.map { GitOps.status(it, env) }
+                    ?.map { GitOps.status(it, auth.env, auth.extraConfig) }
                     ?: emptyList()
             },
             onSuccess = { statuses ->
@@ -127,12 +151,12 @@ class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
             project,
             "Pull All",
             action = {
-                val env = gitEnv()
+                val auth = gitAuth()
                 val log = StringBuilder()
                 dir.listFiles { f -> f.isDirectory && File(f, ".git").isDirectory }
                     ?.sortedBy { it.name }
                     ?.forEach { repoDir ->
-                        val result = GitOps.pull(repoDir, env)
+                        val result = GitOps.pull(repoDir, auth.env, auth.extraConfig)
                         log.appendLine("${if (result.ok) "OK" else "SKIP/FAIL"}  ${repoDir.name}: ${(if (result.ok) result.stdout else result.stderr).trim().ifBlank { "done" }}")
                     }
                 log.toString()
@@ -149,7 +173,7 @@ class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
         com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks.runBackground(
             project,
             "Pull ${repoDir.name}",
-            action = { GitOps.pull(repoDir, gitEnv()) },
+            action = { val auth = gitAuth(); GitOps.pull(repoDir, auth.env, auth.extraConfig) },
             onSuccess = { result ->
                 if (result.ok) {
                     com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks.notifyInfo(project, "Pulled ${repoDir.name}")
@@ -245,7 +269,7 @@ class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
         com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks.runBackground(
             project,
             "Pushing",
-            action = { GitOps.push(repoDir, gitEnv()) },
+            action = { val auth = gitAuth(); GitOps.push(repoDir, auth.env, auth.extraConfig) },
             onSuccess = { result ->
                 if (result.ok) {
                     com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks.notifyInfo(project, "Pushed ${repoDir.name}")

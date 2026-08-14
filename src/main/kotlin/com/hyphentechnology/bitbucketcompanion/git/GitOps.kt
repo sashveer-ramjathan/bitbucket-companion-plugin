@@ -25,9 +25,14 @@ data class BranchEntry(val name: String, val current: Boolean, val remote: Boole
  */
 object GitOps {
 
-    /** Runs `git -C <dir> <args>`, optionally with extra environment variables (e.g. GIT_AUTHOR_*). */
-    fun run(dir: File, vararg args: String, timeoutSeconds: Long = 60, env: Map<String, String> = emptyMap()): GitResult {
-        val pb = ProcessBuilder(listOf("git", "-C", dir.absolutePath) + args)
+    /**
+     * Runs `git -C <dir> <args>`, optionally with extra environment variables (e.g. GIT_AUTHOR_*)
+     * and/or `-c key=value` config overrides applied only to this invocation - e.g. swapping out
+     * `credential.helper` for OAuth-mode auth without touching the user's real ~/.gitconfig.
+     */
+    fun run(dir: File, vararg args: String, timeoutSeconds: Long = 60, env: Map<String, String> = emptyMap(), extraConfig: List<String> = emptyList()): GitResult {
+        val configArgs = extraConfig.flatMap { listOf("-c", it) }
+        val pb = ProcessBuilder(listOf("git") + configArgs + listOf("-C", dir.absolutePath) + args)
         if (env.isNotEmpty()) pb.environment().putAll(env)
         val process = pb.start()
         val stdout = process.inputStream.bufferedReader().readText()
@@ -57,10 +62,10 @@ object GitOps {
         run(dir, "remote", "set-url", "origin", plainUrl)
 
     /** Fetches, then reports ahead/behind/diverged/up-to-date + dirty state relative to upstream. */
-    fun status(dir: File, env: Map<String, String> = emptyMap()): RepoStatus {
+    fun status(dir: File, env: Map<String, String> = emptyMap(), extraConfig: List<String> = emptyList()): RepoStatus {
         val name = dir.name
         val branch = run(dir, "rev-parse", "--abbrev-ref", "HEAD").stdout.trim().ifBlank { "?" }
-        val fetch = run(dir, "fetch", "--quiet", env = env)
+        val fetch = run(dir, "fetch", "--quiet", env = env, extraConfig = extraConfig)
         if (!fetch.ok) {
             val err = fetch.stderr.trim().lines().lastOrNull { it.isNotBlank() } ?: "fetch failed"
             return RepoStatus(name, "fetch-fail", dirty = isDirty(dir), branch = branch, detail = err)
@@ -83,9 +88,9 @@ object GitOps {
     }
 
     /** Fast-forward-only pull; refuses (returns a synthetic failure result) if the tree is dirty. */
-    fun pull(dir: File, env: Map<String, String> = emptyMap()): GitResult {
+    fun pull(dir: File, env: Map<String, String> = emptyMap(), extraConfig: List<String> = emptyList()): GitResult {
         if (isDirty(dir)) return GitResult(-1, "", "SKIP: uncommitted changes")
-        return run(dir, "pull", "--ff-only", timeoutSeconds = 120, env = env)
+        return run(dir, "pull", "--ff-only", timeoutSeconds = 120, env = env, extraConfig = extraConfig)
     }
 
     /** Creates and switches to a new branch. */
@@ -123,14 +128,14 @@ object GitOps {
     }
 
     /** Pushes the current branch, automatically setting the upstream on a first push. */
-    fun push(dir: File, env: Map<String, String> = emptyMap()): GitResult {
+    fun push(dir: File, env: Map<String, String> = emptyMap(), extraConfig: List<String> = emptyList()): GitResult {
         val branch = run(dir, "rev-parse", "--abbrev-ref", "HEAD").stdout.trim()
         if (branch.isBlank() || branch == "HEAD") return GitResult(-1, "", "detached HEAD, not on a branch")
         val upstream = run(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
         return if (!upstream.ok) {
-            run(dir, "push", "--set-upstream", "origin", branch, timeoutSeconds = 120, env = env)
+            run(dir, "push", "--set-upstream", "origin", branch, timeoutSeconds = 120, env = env, extraConfig = extraConfig)
         } else {
-            run(dir, "push", timeoutSeconds = 120, env = env)
+            run(dir, "push", timeoutSeconds = 120, env = env, extraConfig = extraConfig)
         }
     }
 
