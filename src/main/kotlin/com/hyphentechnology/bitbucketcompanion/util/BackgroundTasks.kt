@@ -33,7 +33,13 @@ object BackgroundTasks {
             notifyError(project, "Bitbucket Companion isn't configured yet - set workspace, username or email, and token in Settings > Tools > Bitbucket Companion.")
             return null
         }
-        return BitbucketApiClient(state.workspace, state.authIdentity(), token)
+        return BitbucketApiClient(
+            state.workspace,
+            state.authIdentity(),
+            token,
+            fallbackIdentity = state.fallbackIdentity(),
+            onIdentityResolved = { working -> state.resolvedIdentity = working },
+        )
     }
 
     /**

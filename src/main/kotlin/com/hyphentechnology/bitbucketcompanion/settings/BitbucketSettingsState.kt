@@ -21,10 +21,14 @@ class BitbucketSettingsState : PersistentStateComponent<BitbucketSettingsState.S
     class State {
         var workspace: String = ""
 
-        // Auth identity: either works as the Basic-auth username half alongside the API token.
-        // Username is preferred when both are set (see BackgroundTasks.buildApiClient).
+        // Auth identity: either works as the Basic-auth username half alongside the API token -
+        // but on a given workspace, typically only one of the two actually does. Both are tried
+        // (see BitbucketApiClient's fallback-retry-on-401) and whichever one an actual request
+        // succeeds with is cached here, so future clients start with the right one directly
+        // instead of re-discovering it via a failed request every time.
         var email: String = ""
         var username: String = ""
+        var resolvedIdentity: String = ""
 
         // Git commit identity override for the Commit action; blank = fall back to global `git config`
         var gitAuthorName: String = ""
@@ -44,8 +48,18 @@ class BitbucketSettingsState : PersistentStateComponent<BitbucketSettingsState.S
         var slugIncludeFilter: String = ""
         var slugExcludeFilter: String = ""
 
-        /** The Basic-auth identity to pair with the API token - username if set, else email. */
-        fun authIdentity(): String = username.ifBlank { email }
+        /**
+         * The Basic-auth identity to try first: whichever previously proved to actually work
+         * (see [resolvedIdentity]), else username, else email. See [fallbackIdentity] for the
+         * other candidate, tried automatically on a 401.
+         */
+        fun authIdentity(): String = resolvedIdentity.ifBlank { username.ifBlank { email } }
+
+        /** The other of username/email, if both are set and differ from [authIdentity] - the automatic retry candidate. */
+        fun fallbackIdentity(): String? {
+            val primary = authIdentity()
+            return listOf(username, email).map { it.trim() }.firstOrNull { it.isNotBlank() && it != primary }
+        }
 
         /** True once there's enough to attempt authenticating: workspace + (username or email). */
         fun hasIdentity(): Boolean = workspace.isNotBlank() && authIdentity().isNotBlank()

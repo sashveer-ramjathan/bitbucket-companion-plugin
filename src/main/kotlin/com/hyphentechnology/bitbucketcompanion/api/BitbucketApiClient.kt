@@ -80,9 +80,13 @@ data class BbPipelineStep(val uuid: String, val name: String, val stateName: Str
  */
 class BitbucketApiClient(
     private val workspace: String,
-    /** Either the Atlassian account email or the Bitbucket username - Basic auth accepts both as the identity half of email/username:token. */
+    /** Either the Atlassian account email or the Bitbucket username - Basic auth accepts both as the identity half of email/username:token. Tried first. */
     private val identity: String,
     private val token: String,
+    /** The other of email/username, if both are set - retried once on a 401 before giving up. */
+    private val fallbackIdentity: String? = null,
+    /** Called once a request actually succeeds, with whichever identity worked - lets the caller remember it (see Settings) so future clients start with the right one instead of re-discovering it via a failed request every time. */
+    private val onIdentityResolved: (String) -> Unit = {},
 ) {
     companion object {
         private const val API = "https://api.bitbucket.org/2.0"
@@ -93,14 +97,21 @@ class BitbucketApiClient(
         .followRedirects(HttpClient.Redirect.NORMAL)
         .build()
 
-    private fun authHeader(): String =
-        "Basic " + Base64.getEncoder().encodeToString("$identity:$token".toByteArray(Charsets.UTF_8))
+    /** Whichever identity last worked (or [identity], before anything's been tried yet). */
+    @Volatile
+    private var activeIdentity: String = identity
 
-    private fun request(method: String, url: String, body: String? = null): JsonObject {
+    private fun authHeader(forIdentity: String): String =
+        "Basic " + Base64.getEncoder().encodeToString("$forIdentity:$token".toByteArray(Charsets.UTF_8))
+
+    /**
+     * Sends [method] to [url] with [forIdentity]'s Basic auth, returning the raw response - no
+     * status-code handling, so callers can inspect a 401 before deciding whether to retry.
+     */
+    private fun send(method: String, url: String, body: String?, forIdentity: String): HttpResponse<String> {
         val builder = HttpRequest.newBuilder(URI.create(url))
-            .header("Authorization", authHeader())
+            .header("Authorization", authHeader(forIdentity))
             .timeout(Duration.ofSeconds(30))
-
         val req = when (method) {
             "GET" -> builder.GET()
             "POST" -> builder.header("Content-Type", "application/json")
@@ -109,8 +120,30 @@ class BitbucketApiClient(
                 .PUT(HttpRequest.BodyPublishers.ofString(body ?: "{}"))
             else -> throw IllegalArgumentException("Unsupported method $method")
         }.build()
+        return http.send(req, HttpResponse.BodyHandlers.ofString())
+    }
 
-        val resp = http.send(req, HttpResponse.BodyHandlers.ofString())
+    /**
+     * Sends with [activeIdentity]; if that comes back 401 and a distinct [fallbackIdentity] is
+     * configured, retries once with it. Whichever identity actually gets a non-401 response
+     * becomes the new [activeIdentity] and is reported via [onIdentityResolved] - so e.g. a
+     * workspace where only the email half of email/username works self-corrects after one
+     * failed call instead of failing on every single request.
+     */
+    private fun sendWithFallback(method: String, url: String, body: String?): HttpResponse<String> {
+        val first = send(method, url, body, activeIdentity)
+        val fallback = fallbackIdentity
+        if (first.statusCode() != 401 || fallback == null || fallback == activeIdentity) return first
+        val second = send(method, url, body, fallback)
+        if (second.statusCode() != 401) {
+            activeIdentity = fallback
+            onIdentityResolved(fallback)
+        }
+        return second
+    }
+
+    private fun request(method: String, url: String, body: String? = null): JsonObject {
+        val resp = sendWithFallback(method, url, body)
         if (resp.statusCode() >= 400) {
             throw BitbucketApiException("HTTP ${resp.statusCode()} for $url\n${resp.body()}")
         }
@@ -118,13 +151,28 @@ class BitbucketApiClient(
         return JsonParser.parseString(resp.body()).asJsonObject
     }
 
-    private fun requestBytes(url: String): ByteArray {
+    private fun sendBytes(url: String, forIdentity: String): HttpResponse<ByteArray> {
         val req = HttpRequest.newBuilder(URI.create(url))
-            .header("Authorization", authHeader())
+            .header("Authorization", authHeader(forIdentity))
             .timeout(Duration.ofSeconds(60))
             .GET()
             .build()
-        val resp = http.send(req, HttpResponse.BodyHandlers.ofByteArray())
+        return http.send(req, HttpResponse.BodyHandlers.ofByteArray())
+    }
+
+    private fun requestBytes(url: String): ByteArray {
+        val first = sendBytes(url, activeIdentity)
+        val fallback = fallbackIdentity
+        val resp = if (first.statusCode() == 401 && fallback != null && fallback != activeIdentity) {
+            val second = sendBytes(url, fallback)
+            if (second.statusCode() != 401) {
+                activeIdentity = fallback
+                onIdentityResolved(fallback)
+            }
+            second
+        } else {
+            first
+        }
         if (resp.statusCode() >= 400) {
             throw BitbucketApiException("HTTP ${resp.statusCode()} for $url")
         }
