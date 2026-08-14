@@ -1,0 +1,265 @@
+package com.hyphentechnology.bitbucketcompanion.api
+
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import java.net.URI
+import java.net.URLEncoder
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.time.Duration
+import java.util.Base64
+
+class BitbucketApiException(message: String) : RuntimeException(message)
+
+data class BbProject(val key: String, val name: String)
+data class BbRepo(val slug: String, val projectKey: String, val htmlUrl: String)
+data class BbPullRequest(
+    val id: Long,
+    val state: String,
+    val title: String,
+    val sourceBranch: String?,
+    val destBranch: String?,
+    val description: String?,
+    val htmlUrl: String?,
+)
+data class BbPrStatus(val state: String, val name: String, val url: String?)
+data class BbPipeline(val buildNumber: Int, val uuid: String, val stateName: String, val resultName: String?)
+data class BbPipelineStep(val uuid: String, val name: String, val stateName: String, val resultName: String?)
+
+/**
+ * Kotlin port of bb.py's request/auth/pagination logic - same Basic-auth-with-email+token
+ * scheme, same `next`-link pagination. All calls are synchronous/blocking; callers MUST run
+ * them off the EDT (see Task.Backgroundable usages in the UI layer).
+ *
+ * One deliberate simplification vs. bb.py: pipelineLog() doesn't need bb.py's manual
+ * "strip auth header before following the redirect" fix. java.net.http.HttpClient's
+ * Redirect.NORMAL policy already drops the Authorization header on a cross-host redirect
+ * per its documented behavior - exactly the bug bb.py's urllib had to work around by hand.
+ */
+class BitbucketApiClient(
+    private val workspace: String,
+    private val email: String,
+    private val token: String,
+) {
+    companion object {
+        private const val API = "https://api.bitbucket.org/2.0"
+    }
+
+    private val http: HttpClient = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(15))
+        .followRedirects(HttpClient.Redirect.NORMAL)
+        .build()
+
+    private fun authHeader(): String =
+        "Basic " + Base64.getEncoder().encodeToString("$email:$token".toByteArray(Charsets.UTF_8))
+
+    private fun request(method: String, url: String, body: String? = null): JsonObject {
+        val builder = HttpRequest.newBuilder(URI.create(url))
+            .header("Authorization", authHeader())
+            .timeout(Duration.ofSeconds(30))
+
+        val req = when (method) {
+            "GET" -> builder.GET()
+            "POST" -> builder.header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body ?: "{}"))
+            "PUT" -> builder.header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString(body ?: "{}"))
+            else -> throw IllegalArgumentException("Unsupported method $method")
+        }.build()
+
+        val resp = http.send(req, HttpResponse.BodyHandlers.ofString())
+        if (resp.statusCode() >= 400) {
+            throw BitbucketApiException("HTTP ${resp.statusCode()} for $url\n${resp.body()}")
+        }
+        if (resp.body().isNullOrBlank()) return JsonObject()
+        return JsonParser.parseString(resp.body()).asJsonObject
+    }
+
+    private fun requestBytes(url: String): ByteArray {
+        val req = HttpRequest.newBuilder(URI.create(url))
+            .header("Authorization", authHeader())
+            .timeout(Duration.ofSeconds(60))
+            .GET()
+            .build()
+        val resp = http.send(req, HttpResponse.BodyHandlers.ofByteArray())
+        if (resp.statusCode() >= 400) {
+            throw BitbucketApiException("HTTP ${resp.statusCode()} for $url")
+        }
+        return resp.body()
+    }
+
+    private fun paginate(startUrl: String): Sequence<JsonObject> = sequence {
+        var url: String? = startUrl
+        while (url != null) {
+            val page = request("GET", url)
+            val values = page.getAsJsonArray("values") ?: JsonArray()
+            for (v in values) yield(v.asJsonObject)
+            url = page.get("next")?.takeIf { !it.isJsonNull }?.asString
+        }
+    }
+
+    private fun normUuid(u: String): String {
+        val trimmed = u.trim().trim('{', '}')
+        return URLEncoder.encode("{$trimmed}", "UTF-8")
+    }
+
+    // ---- account / repos ----
+
+    /**
+     * Verifies the configured workspace/email/token can reach the workspace.
+     * Throws [BitbucketApiException] on any auth or network failure.
+     */
+    fun ping() {
+        request("GET", "$API/repositories/$workspace?pagelen=1")
+    }
+
+    /** Lists every project in the workspace. */
+    fun listProjects(): List<BbProject> =
+        paginate("$API/workspaces/$workspace/projects?pagelen=100")
+            .map { BbProject(it.get("key").asString, it.get("name").asString) }
+            .toList()
+
+    /** Lists repos in the workspace, optionally narrowed to a single project key. */
+    fun listRepos(projectKey: String? = null): List<BbRepo> {
+        val url = if (projectKey.isNullOrBlank()) {
+            "$API/repositories/$workspace?pagelen=100"
+        } else {
+            "$API/repositories/$workspace?q=" +
+                URLEncoder.encode("project.key=\"$projectKey\"", "UTF-8") + "&pagelen=100"
+        }
+        return paginate(url).map { r ->
+            val project = r.getAsJsonObject("project")?.get("key")?.asString ?: "-"
+            val html = r.getAsJsonObject("links")?.getAsJsonObject("html")?.get("href")?.asString
+                ?: "https://bitbucket.org/$workspace/${r.get("slug").asString}"
+            BbRepo(r.get("slug").asString, project, html)
+        }.toList()
+    }
+
+    /** Resolves the browser-facing URL for a single repo. */
+    fun repoUrl(repoSlug: String): String {
+        val r = request("GET", "$API/repositories/$workspace/$repoSlug")
+        return r.getAsJsonObject("links")?.getAsJsonObject("html")?.get("href")?.asString
+            ?: "https://bitbucket.org/$workspace/$repoSlug"
+    }
+
+    /** Clone URL with the token embedded for auth - only ever used transiently for the clone call itself. */
+    fun cloneUrlWithToken(repoSlug: String): String =
+        "https://x-bitbucket-api-token-auth:$token@bitbucket.org/$workspace/$repoSlug.git"
+
+    /** Token-free clone URL, written back to `origin` immediately after cloning. */
+    fun cloneUrlPlain(repoSlug: String): String =
+        "https://bitbucket.org/$workspace/$repoSlug.git"
+
+    // ---- pull requests ----
+
+    /** Opens a new pull request. */
+    fun createPullRequest(repoSlug: String, title: String, source: String, dest: String, description: String): BbPullRequest {
+        val body = JsonObject().apply {
+            addProperty("title", title)
+            add("source", JsonObject().apply { add("branch", JsonObject().apply { addProperty("name", source) }) })
+            add("destination", JsonObject().apply { add("branch", JsonObject().apply { addProperty("name", dest) }) })
+            addProperty("description", description)
+            addProperty("close_source_branch", true)
+        }
+        return parsePr(request("POST", "$API/repositories/$workspace/$repoSlug/pullrequests", body.toString()))
+    }
+
+    /** Lists PRs for a repo, filtered by state (`OPEN` / `MERGED` / `DECLINED`). */
+    fun listPullRequests(repoSlug: String, state: String = "OPEN"): List<BbPullRequest> =
+        paginate("$API/repositories/$workspace/$repoSlug/pullrequests?state=$state&pagelen=50")
+            .map { parsePr(it) }
+            .toList()
+
+    /** Fetches one PR's full detail. */
+    fun getPullRequest(repoSlug: String, id: Long): BbPullRequest =
+        parsePr(request("GET", "$API/repositories/$workspace/$repoSlug/pullrequests/$id"))
+
+    /** Updates title/description/destination on an existing PR; null/blank params are left unchanged. */
+    fun updatePullRequest(repoSlug: String, id: Long, title: String?, description: String?, dest: String?): BbPullRequest {
+        val body = JsonObject()
+        if (!title.isNullOrBlank()) body.addProperty("title", title)
+        if (description != null) body.addProperty("description", description)
+        if (!dest.isNullOrBlank()) {
+            body.add("destination", JsonObject().apply { add("branch", JsonObject().apply { addProperty("name", dest) }) })
+        }
+        return parsePr(request("PUT", "$API/repositories/$workspace/$repoSlug/pullrequests/$id", body.toString()))
+    }
+
+    /** The build/check statuses shown as the PR's green/red checks. */
+    fun pullRequestStatuses(repoSlug: String, id: Long): List<BbPrStatus> =
+        paginate("$API/repositories/$workspace/$repoSlug/pullrequests/$id/statuses")
+            .map { BbPrStatus(it.get("state").asString, it.get("name").asString, it.get("url")?.takeIf { j -> !j.isJsonNull }?.asString) }
+            .toList()
+
+    private fun parsePr(pr: JsonObject): BbPullRequest {
+        val source = pr.getAsJsonObject("source")?.getAsJsonObject("branch")?.get("name")?.asString
+        val dest = pr.getAsJsonObject("destination")?.getAsJsonObject("branch")?.get("name")?.asString
+        val html = pr.getAsJsonObject("links")?.getAsJsonObject("html")?.get("href")?.asString
+        return BbPullRequest(
+            id = pr.get("id").asLong,
+            state = pr.get("state")?.asString ?: "-",
+            title = pr.get("title")?.asString ?: "",
+            sourceBranch = source,
+            destBranch = dest,
+            description = pr.get("description")?.takeIf { !it.isJsonNull }?.asString,
+            htmlUrl = html,
+        )
+    }
+
+    // ---- pipelines ----
+
+    /** Most recent pipeline runs for a repo, newest first. */
+    fun listPipelines(repoSlug: String, limit: Int = 10): List<BbPipeline> {
+        val page = request("GET", "$API/repositories/$workspace/$repoSlug/pipelines/?sort=-created_on&pagelen=$limit")
+        val values = page.getAsJsonArray("values") ?: JsonArray()
+        return values.map { v ->
+            val o = v.asJsonObject
+            val state = o.getAsJsonObject("state")
+            BbPipeline(
+                buildNumber = o.get("build_number").asInt,
+                uuid = o.get("uuid").asString,
+                stateName = state?.get("name")?.asString ?: "-",
+                resultName = state?.getAsJsonObject("result")?.get("name")?.asString,
+            )
+        }
+    }
+
+    /** Steps of one pipeline run, in execution order. */
+    fun pipelineSteps(repoSlug: String, pipelineUuid: String): List<BbPipelineStep> {
+        val puuid = normUuid(pipelineUuid)
+        return paginate("$API/repositories/$workspace/$repoSlug/pipelines/$puuid/steps/").map { s ->
+            val state = s.getAsJsonObject("state")
+            BbPipelineStep(
+                uuid = s.get("uuid").asString,
+                name = s.get("name")?.asString ?: "-",
+                stateName = state?.get("name")?.asString ?: "-",
+                resultName = state?.getAsJsonObject("result")?.get("name")?.asString,
+            )
+        }.toList()
+    }
+
+    /**
+     * Full log text for one pipeline step. Relies on [http]'s Redirect.NORMAL policy to drop
+     * the Authorization header on the endpoint's cross-host redirect - see the class doc.
+     */
+    fun pipelineLog(repoSlug: String, pipelineUuid: String, stepUuid: String): String {
+        val puuid = normUuid(pipelineUuid)
+        val suuid = normUuid(stepUuid)
+        val bytes = requestBytes("$API/repositories/$workspace/$repoSlug/pipelines/$puuid/steps/$suuid/log")
+        return String(bytes, Charsets.UTF_8)
+    }
+
+    /** Browser-facing URL for one pipeline run. */
+    fun pipelineWebUrl(repoSlug: String, pipelineUuid: String): String {
+        val puuid = normUuid(pipelineUuid)
+        val p = request("GET", "$API/repositories/$workspace/$repoSlug/pipelines/$puuid")
+        val buildNumber = p.get("build_number")?.takeIf { !it.isJsonNull }?.asInt
+        return if (buildNumber != null) {
+            "https://bitbucket.org/$workspace/$repoSlug/pipelines/results/$buildNumber"
+        } else {
+            p.getAsJsonObject("links")?.getAsJsonObject("html")?.get("href")?.asString ?: ""
+        }
+    }
+}

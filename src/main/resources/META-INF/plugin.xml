@@ -1,0 +1,34 @@
+<idea-plugin>
+    <id>com.hyphentechnology.bitbucketcompanion</id>
+    <name>Bitbucket Companion</name>
+    <vendor email="sashveer.ramjathan@entelect.co.za" url="https://github.com/sashveer-ramjathan">Sashveer Ramjathan</vendor>
+
+    <description><![CDATA[
+    A GUI for the Bitbucket Cloud workflow this team already scripted in <code>bb.py</code>:
+    browse and clone repos, see git status and pull/branch/commit/push per repo, create and
+    watch pull requests, and browse pipelines with a live-updating step list and log viewer -
+    all backed by an Atlassian API token stored in the IDE's secure credential store.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionPoint="com.intellij">
+        <toolWindow id="Bitbucket Companion"
+                    secondary="true"
+                    icon="AllIcons.Vcs.Vendors.Github"
+                    anchor="right"
+                    factoryClass="com.hyphentechnology.bitbucketcompanion.ui.BitbucketToolWindowFactory"/>
+
+        <applicationConfigurable
+                parentId="tools"
+                instance="com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsConfigurable"
+                id="com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsConfigurable"
+                displayName="Bitbucket Companion"/>
+
+        <applicationService
+                serviceImplementation="com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsState"/>
+
+        <notificationGroup id="Bitbucket Companion"
+                            displayType="BALLOON"/>
+    </extensions>
+</idea-plugin>

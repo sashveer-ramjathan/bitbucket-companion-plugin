@@ -1,0 +1,96 @@
+# Builds, tests, and verifies the plugin on every push to main and every pull request.
+# Adapted from JetBrains' intellij-platform-plugin-template build workflow.
+name: Build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build plugin
+        run: ./gradlew buildPlugin
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-distribution
+          path: build/distributions/*.zip
+
+  test:
+    name: Test
+    needs: [ build ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Run tests
+        run: ./gradlew check
+
+      - name: Upload test results on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-result
+          path: build/reports/tests
+
+  verify:
+    name: Verify Plugin
+    needs: [ build ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Run Plugin Verifier
+        run: ./gradlew verifyPlugin
+
+      - name: Upload verifier reports on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: verifier-reports
+          path: build/reports/pluginVerifier

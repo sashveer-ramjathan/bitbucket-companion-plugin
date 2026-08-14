@@ -1,0 +1,87 @@
+# On a version tag push: builds the plugin, attaches the zip to a GitHub Release, and
+# publishes it (zip + updatePlugins.xml) to the `plugin-repo` branch so installs that have
+# added this repo as a custom plugin repository pick it up as an in-IDE update.
+#
+# Deliberately does NOT publish to the JetBrains Marketplace - this is a private, internal
+# plugin, not a public listing.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build plugin
+        run: ./gradlew buildPlugin
+
+      - name: Resolve plugin metadata
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PLUGIN_ID=$(grep '^pluginGroup' gradle.properties | cut -d'=' -f2 | xargs)
+          SINCE_BUILD=$(grep '^pluginSinceBuild' gradle.properties | cut -d'=' -f2 | xargs)
+          ZIP_PATH=$(ls build/distributions/*.zip | head -n1)
+          ZIP_NAME=$(basename "$ZIP_PATH")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "plugin_id=$PLUGIN_ID" >> "$GITHUB_OUTPUT"
+          echo "since_build=$SINCE_BUILD" >> "$GITHUB_OUTPUT"
+          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        run: |
+          gh release create "$GITHUB_REF_NAME" "${{ steps.meta.outputs.zip_path }}" \
+            --title "${{ steps.meta.outputs.version }}" \
+            --generate-notes
+
+      - name: Publish to self-update plugin repository
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin plugin-repo > /dev/null 2>&1; then
+            git fetch origin plugin-repo
+            git checkout plugin-repo
+          else
+            git checkout --orphan plugin-repo
+            git rm -rf . > /dev/null 2>&1 || true
+          fi
+
+          cp "${{ steps.meta.outputs.zip_path }}" "./${{ steps.meta.outputs.zip_name }}"
+
+          cat > updatePlugins.xml <<EOF
+          <plugins>
+            <plugin id="${{ steps.meta.outputs.plugin_id }}" url="https://raw.githubusercontent.com/${{ github.repository }}/plugin-repo/${{ steps.meta.outputs.zip_name }}" version="${{ steps.meta.outputs.version }}">
+              <idea-version since-build="${{ steps.meta.outputs.since_build }}"/>
+            </plugin>
+          </plugins>
+          EOF
+
+          git add "${{ steps.meta.outputs.zip_name }}" updatePlugins.xml
+          git commit -m "Publish ${{ steps.meta.outputs.version }} to self-update channel"
+          git push origin plugin-repo
