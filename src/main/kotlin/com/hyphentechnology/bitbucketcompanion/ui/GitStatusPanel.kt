@@ -25,7 +25,7 @@ import javax.swing.table.DefaultTableModel
  */
 class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
 
-    private val columns = arrayOf("Repo", "Status", "Dirty", "Detail")
+    private val columns = arrayOf("Repo", "Branch", "Status", "Dirty", "Detail")
     private val tableModel = object : DefaultTableModel(columns, 0) {
         override fun isCellEditable(row: Int, column: Int) = false
     }
@@ -99,7 +99,7 @@ class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
             },
             onSuccess = { statuses ->
                 tableModel.rowCount = 0
-                statuses.forEach { tableModel.addRow(arrayOf(it.name, it.state, if (it.dirty) "yes" else "", it.detail)) }
+                statuses.forEach { tableModel.addRow(arrayOf(it.name, it.branch, it.state, if (it.dirty) "yes" else "", it.detail)) }
             },
         )
     }

@@ -11,6 +11,7 @@ data class RepoStatus(
     val name: String,
     val state: String,
     val dirty: Boolean,
+    val branch: String = "",
     val detail: String = "",
 )
 
@@ -58,15 +59,16 @@ object GitOps {
     /** Fetches, then reports ahead/behind/diverged/up-to-date + dirty state relative to upstream. */
     fun status(dir: File, env: Map<String, String> = emptyMap()): RepoStatus {
         val name = dir.name
+        val branch = run(dir, "rev-parse", "--abbrev-ref", "HEAD").stdout.trim().ifBlank { "?" }
         val fetch = run(dir, "fetch", "--quiet", env = env)
         if (!fetch.ok) {
             val err = fetch.stderr.trim().lines().lastOrNull { it.isNotBlank() } ?: "fetch failed"
-            return RepoStatus(name, "fetch-fail", dirty = isDirty(dir), detail = err)
+            return RepoStatus(name, "fetch-fail", dirty = isDirty(dir), branch = branch, detail = err)
         }
         val dirty = isDirty(dir)
         val upstream = run(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
         if (!upstream.ok) {
-            return RepoStatus(name, "no-upstream", dirty)
+            return RepoStatus(name, "no-upstream", dirty, branch = branch)
         }
         val counts = run(dir, "rev-list", "--left-right", "--count", "HEAD...@{u}").stdout.trim().split(Regex("\\s+"))
         val ahead = counts.getOrNull(0)?.toIntOrNull() ?: 0
@@ -77,7 +79,7 @@ object GitOps {
             ahead > 0 -> "ahead +$ahead"
             else -> "behind -$behind"
         }
-        return RepoStatus(name, state, dirty)
+        return RepoStatus(name, state, dirty, branch = branch)
     }
 
     /** Fast-forward-only pull; refuses (returns a synthetic failure result) if the tree is dirty. */
