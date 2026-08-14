@@ -3,6 +3,7 @@ package com.hyphentechnology.bitbucketcompanion.ui
 import com.hyphentechnology.bitbucketcompanion.git.GitOps
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketCredentials
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsState
+import com.hyphentechnology.bitbucketcompanion.util.WrapLayout
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.project.Project
@@ -46,7 +47,7 @@ class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
     private val dirLabel = JBLabel(currentDir?.absolutePath ?: "(no folder chosen)")
 
     init {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+        val toolbar = JPanel(WrapLayout(FlowLayout.LEFT)).apply {
             add(JButton("Choose Folder...").apply { addActionListener { chooseFolder() } })
             add(dirLabel)
             add(JButton("Refresh").apply { addActionListener { refresh() } })

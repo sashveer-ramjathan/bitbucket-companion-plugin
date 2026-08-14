@@ -4,6 +4,7 @@ import com.hyphentechnology.bitbucketcompanion.git.GitOps
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketCredentials
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsState
 import com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks
+import com.hyphentechnology.bitbucketcompanion.util.WrapLayout
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.ide.CopyPasteManager
@@ -44,7 +45,7 @@ class ReposPanel(private val project: Project?) : JPanel(BorderLayout()) {
     private val outputArea = JBTextArea(6, 40).apply { isEditable = false }
 
     init {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+        val toolbar = JPanel(WrapLayout(FlowLayout.LEFT)).apply {
             add(JBLabel("Project filter:"))
             add(projectFilterField)
             add(JButton("Refresh").apply { addActionListener { refresh() } })

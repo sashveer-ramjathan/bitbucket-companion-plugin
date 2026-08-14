@@ -5,6 +5,7 @@ import com.hyphentechnology.bitbucketcompanion.api.BbPipelineStep
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsState
 import com.hyphentechnology.bitbucketcompanion.util.AnsiUtil
 import com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks
+import com.hyphentechnology.bitbucketcompanion.util.WrapLayout
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -60,7 +61,7 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
     }
 
     init {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+        val toolbar = JPanel(WrapLayout(FlowLayout.LEFT)).apply {
             add(JBLabel("Repo:"))
             add(repoCombo)
             add(JBLabel("Limit:"))
@@ -72,7 +73,7 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
         pipelineTable.selectionModel.addListSelectionListener { if (!it.valueIsAdjusting) onPipelineSelected() }
         stepTable.selectionModel.addListSelectionListener { if (!it.valueIsAdjusting) onStepSelected() }
 
-        val stepsToolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+        val stepsToolbar = JPanel(WrapLayout(FlowLayout.LEFT)).apply {
             add(watchButton.apply { addActionListener { toggleWatch() } })
         }
         val stepsPanel = JPanel(BorderLayout()).apply {
@@ -80,7 +81,7 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
             add(JBScrollPane(stepTable), BorderLayout.CENTER)
             border = javax.swing.BorderFactory.createTitledBorder("Steps")
         }
-        val logToolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+        val logToolbar = JPanel(WrapLayout(FlowLayout.LEFT)).apply {
             add(wrapToggle)
         }
         val logPanel = JPanel(BorderLayout()).apply {

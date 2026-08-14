@@ -4,6 +4,7 @@ import com.hyphentechnology.bitbucketcompanion.api.BbPullRequest
 import com.hyphentechnology.bitbucketcompanion.api.BitbucketApiClient
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsState
 import com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks
+import com.hyphentechnology.bitbucketcompanion.util.WrapLayout
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -53,7 +54,7 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
     private var watchTimer: Timer? = null
 
     init {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+        val toolbar = JPanel(WrapLayout(FlowLayout.LEFT)).apply {
             add(JBLabel("Repo:"))
             add(repoCombo)
             add(JBLabel("State:"))
@@ -66,7 +67,7 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
 
         prTable.selectionModel.addListSelectionListener { if (!it.valueIsAdjusting) onPrSelected() }
 
-        val checksToolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+        val checksToolbar = JPanel(WrapLayout(FlowLayout.LEFT)).apply {
             add(detailLabel)
             add(watchButton.apply { addActionListener { toggleWatch() } })
         }
