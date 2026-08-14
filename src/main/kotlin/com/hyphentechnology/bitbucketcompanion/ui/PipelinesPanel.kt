@@ -19,6 +19,7 @@ import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JPanel
 import javax.swing.JSplitPane
+import javax.swing.JToggleButton
 import javax.swing.Timer
 import javax.swing.table.DefaultTableModel
 
@@ -54,6 +55,9 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
     private var watchTimer: Timer? = null
 
     private val logArea = JBTextArea().apply { isEditable = false; lineWrap = false }
+    private val wrapToggle = JToggleButton("Wrap Lines").apply {
+        addActionListener { logArea.lineWrap = isSelected }
+    }
 
     init {
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
@@ -76,7 +80,11 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
             add(JBScrollPane(stepTable), BorderLayout.CENTER)
             border = javax.swing.BorderFactory.createTitledBorder("Steps")
         }
+        val logToolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+            add(wrapToggle)
+        }
         val logPanel = JPanel(BorderLayout()).apply {
+            add(logToolbar, BorderLayout.NORTH)
             add(JBScrollPane(logArea), BorderLayout.CENTER)
             border = javax.swing.BorderFactory.createTitledBorder("Log")
         }
