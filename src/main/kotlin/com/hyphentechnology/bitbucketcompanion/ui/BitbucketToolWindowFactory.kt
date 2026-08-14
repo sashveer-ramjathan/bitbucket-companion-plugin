@@ -21,7 +21,7 @@ class BitbucketToolWindowFactory : ToolWindowFactory {
 
         tabs.addTab("Repos", ReposPanel(project))
         tabs.addTab("Local / Git Status", GitStatusPanel(project))
-        tabs.addTab("Pull Requests", comingSoon("Pull Requests"))
+        tabs.addTab("Pull Requests", PullRequestsPanel(project))
         tabs.addTab("Pipelines", comingSoon("Pipelines"))
 
         val content = contentFactory.createContent(tabs, "", false)
