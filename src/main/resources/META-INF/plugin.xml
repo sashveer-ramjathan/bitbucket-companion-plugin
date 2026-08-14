@@ -12,7 +12,7 @@
 
     <depends>com.intellij.modules.platform</depends>
 
-    <extensions defaultExtensionPoint="com.intellij">
+    <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Bitbucket Companion"
                     icon="/icons/toolWindowBitbucket.svg"
                     anchor="left"
