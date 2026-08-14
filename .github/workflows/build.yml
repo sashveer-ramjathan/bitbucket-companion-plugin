@@ -1,4 +1,14 @@
 # Builds, tests, and verifies the plugin on every push to main and every pull request.
+#
+# The Plugin Verifier check (`verifyPlugin`) downloads a full target IDE per version it checks
+# against - the first run after a platformVersion/pluginVerifierIdeVersions bump is genuinely
+# slow, but that download lands in Gradle's own dependency cache (under GRADLE_USER_HOME), which
+# gradle/actions/setup-gradle persists across runs via GitHub Actions cache. The verify job below
+# deliberately does NOT set cache-read-only, unlike the test job - it needs to be able to WRITE
+# to that cache the first time, or every single run pays the full download cost again. Once
+# warm, verifyPlugin only re-runs the actual (fast) bytecode/API compatibility analysis against
+# the already-downloaded IDE, which is what keeps this in the fast per-push loop instead of
+# being deferred to release time - full accuracy, not a lighter proxy check.
 # Adapted from JetBrains' intellij-platform-plugin-template build workflow.
 name: Build
 
@@ -80,10 +90,11 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      # No cache-read-only here (unlike the test job) - this job downloads its own target IDE
+      # that nothing else in this workflow touches, so it needs write access to actually warm
+      # that cache. See the file header comment for why.
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: true
 
       - name: Run Plugin Verifier
         run: ./gradlew verifyPlugin
