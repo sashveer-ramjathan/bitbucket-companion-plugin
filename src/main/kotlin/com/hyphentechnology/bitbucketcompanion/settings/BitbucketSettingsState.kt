@@ -38,6 +38,12 @@ class BitbucketSettingsState : PersistentStateComponent<BitbucketSettingsState.S
         var lastProjectFilter: String = ""
         var lastCloneDir: String = ""
 
+        // Repos tab slug filters - comma-separated keywords, matched case-insensitively against
+        // the slug substring. A repo is shown if its slug contains at least one include keyword
+        // (or the include list is empty) AND contains none of the exclude keywords.
+        var slugIncludeFilter: String = ""
+        var slugExcludeFilter: String = ""
+
         /** The Basic-auth identity to pair with the API token - username if set, else email. */
         fun authIdentity(): String = username.ifBlank { email }
 

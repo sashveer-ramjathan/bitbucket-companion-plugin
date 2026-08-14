@@ -42,18 +42,34 @@ class ReposPanel(private val project: Project?) : JPanel(BorderLayout()) {
     private val projectFilterField = JBTextField(settings.lastProjectFilter, 12).apply {
         toolTipText = "Optional project key filter, e.g. MATRIX"
     }
+    private val includeFilterField = JBTextField(settings.slugIncludeFilter, 12).apply {
+        toolTipText = "Comma-separated keywords - show only slugs containing at least one (blank = no restriction)"
+    }
+    private val excludeFilterField = JBTextField(settings.slugExcludeFilter, 12).apply {
+        toolTipText = "Comma-separated keywords - hide any slug containing one of these"
+    }
+    private val activeFiltersLabel = JBLabel(" ")
     private val outputArea = JBTextArea(6, 40).apply { isEditable = false }
 
     init {
         val toolbar = JPanel(WrapLayout(FlowLayout.LEFT)).apply {
             add(JBLabel("Project filter:"))
             add(projectFilterField)
+            add(JBLabel("Slug includes:"))
+            add(includeFilterField)
+            add(JBLabel("Slug excludes:"))
+            add(excludeFilterField)
             add(JButton("Refresh").apply { addActionListener { refresh() } })
             add(JButton("Open URL").apply { addActionListener { openSelectedUrl() } })
             add(JButton("Copy URL").apply { addActionListener { copySelectedUrl() } })
             add(JButton("Clone Selected...").apply { addActionListener { cloneSelected() } })
             add(JButton("Clone All...").apply { addActionListener { cloneAll() } })
             add(JButton("Verify...").apply { addActionListener { verify() } })
+        }
+        val filtersBar = JPanel(WrapLayout(FlowLayout.LEFT)).apply { add(activeFiltersLabel) }
+        val north = JPanel(BorderLayout()).apply {
+            add(toolbar, BorderLayout.NORTH)
+            add(filtersBar, BorderLayout.SOUTH)
         }
 
         val split = JSplitPane(
@@ -62,13 +78,16 @@ class ReposPanel(private val project: Project?) : JPanel(BorderLayout()) {
             JBScrollPane(outputArea).apply { border = javax.swing.BorderFactory.createTitledBorder("Output") },
         ).apply { resizeWeight = 0.75 }
 
-        add(toolbar, BorderLayout.NORTH)
+        add(north, BorderLayout.NORTH)
         add(split, BorderLayout.CENTER)
 
         if (settings.hasIdentity() && !BitbucketCredentials.getToken().isNullOrBlank()) {
             refresh()
         }
     }
+
+    private fun keywords(field: JBTextField): List<String> =
+        field.text.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }
 
     private fun selectedRow(): Int {
         val row = table.selectedRow
@@ -81,14 +100,34 @@ class ReposPanel(private val project: Project?) : JPanel(BorderLayout()) {
     private fun refresh() {
         val client = BackgroundTasks.buildApiClient(project) ?: return
         val projectFilter = projectFilterField.text.trim().ifBlank { null }
+        val include = keywords(includeFilterField)
+        val exclude = keywords(excludeFilterField)
         BackgroundTasks.runBackground(
             project,
             "Loading Repos",
             action = { client.listRepos(projectFilter) },
             onSuccess = { repos ->
+                val filtered = repos.filter { r ->
+                    val slug = r.slug.lowercase()
+                    (include.isEmpty() || include.any { slug.contains(it) }) && exclude.none { slug.contains(it) }
+                }
                 tableModel.rowCount = 0
-                repos.forEach { tableModel.addRow(arrayOf(it.slug, it.projectKey, it.htmlUrl)) }
+                filtered.forEach { tableModel.addRow(arrayOf(it.slug, it.projectKey, it.htmlUrl)) }
+
                 settings.lastProjectFilter = projectFilter ?: ""
+                settings.slugIncludeFilter = includeFilterField.text.trim()
+                settings.slugExcludeFilter = excludeFilterField.text.trim()
+
+                val parts = buildList {
+                    projectFilter?.let { add("project=$it") }
+                    if (include.isNotEmpty()) add("including \"${include.joinToString(", ")}\"")
+                    if (exclude.isNotEmpty()) add("excluding \"${exclude.joinToString(", ")}\"")
+                }
+                activeFiltersLabel.text = if (parts.isEmpty()) {
+                    "${filtered.size} repos"
+                } else {
+                    "Filters: ${parts.joinToString(" · ")} - showing ${filtered.size} of ${repos.size} repos"
+                }
             },
         )
     }
@@ -137,6 +176,8 @@ class ReposPanel(private val project: Project?) : JPanel(BorderLayout()) {
 
     private fun cloneAll() {
         val projectFilter = projectFilterField.text.trim().ifBlank { null }
+        val include = keywords(includeFilterField)
+        val exclude = keywords(excludeFilterField)
         val targetDir = chooseDirectory("Choose destination folder for Clone All") ?: return
         val client = BackgroundTasks.buildApiClient(project) ?: return
 
@@ -145,7 +186,13 @@ class ReposPanel(private val project: Project?) : JPanel(BorderLayout()) {
             project,
             "Clone All Repos",
             action = {
-                val slugs = client.listRepos(projectFilter).map { it.slug }
+                // Same include/exclude filter as the table, so Clone All matches what's shown.
+                val slugs = client.listRepos(projectFilter)
+                    .filter { r ->
+                        val slug = r.slug.lowercase()
+                        (include.isEmpty() || include.any { slug.contains(it) }) && exclude.none { slug.contains(it) }
+                    }
+                    .map { it.slug }
                 val log = StringBuilder()
                 var ok = 0
                 for (slug in slugs) {
