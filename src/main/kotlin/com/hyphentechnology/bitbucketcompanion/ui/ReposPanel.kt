@@ -1,12 +1,14 @@
 package com.hyphentechnology.bitbucketcompanion.ui
 
 import com.hyphentechnology.bitbucketcompanion.git.GitOps
+import com.hyphentechnology.bitbucketcompanion.settings.BitbucketCredentials
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsState
 import com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -34,7 +36,9 @@ class ReposPanel(private val project: Project?) : JPanel(BorderLayout()) {
     }
     private val table = JBTable(tableModel)
 
-    private val projectFilterField = JBTextField(12).apply {
+    private val settings = BitbucketSettingsState.getInstance().state
+
+    private val projectFilterField = JBTextField(settings.lastProjectFilter, 12).apply {
         toolTipText = "Optional project key filter, e.g. MATRIX"
     }
     private val outputArea = JBTextArea(6, 40).apply { isEditable = false }
@@ -60,7 +64,9 @@ class ReposPanel(private val project: Project?) : JPanel(BorderLayout()) {
         add(toolbar, BorderLayout.NORTH)
         add(split, BorderLayout.CENTER)
 
-        refresh()
+        if (settings.workspace.isNotBlank() && settings.email.isNotBlank() && !BitbucketCredentials.getToken().isNullOrBlank()) {
+            refresh()
+        }
     }
 
     private fun selectedRow(): Int {
@@ -81,7 +87,7 @@ class ReposPanel(private val project: Project?) : JPanel(BorderLayout()) {
             onSuccess = { repos ->
                 tableModel.rowCount = 0
                 repos.forEach { tableModel.addRow(arrayOf(it.slug, it.projectKey, it.htmlUrl)) }
-                BitbucketSettingsState.getInstance().state.lastProjectFilter = projectFilter ?: ""
+                settings.lastProjectFilter = projectFilter ?: ""
             },
         )
     }
@@ -189,12 +195,16 @@ class ReposPanel(private val project: Project?) : JPanel(BorderLayout()) {
         )
     }
 
+    /** Opens a folder picker, defaulting to and remembering the last-used clone directory (shared with the Local / Git Status tab). */
     private fun chooseDirectory(title: String): File? {
-        val descriptor = FileChooserDescriptorFactory.createSingleFolderDescriptor()
+        val descriptor = FileChooserDescriptorFactory.createSingleFolderDescriptor().apply { this.title = title }
+        val toSelect = settings.lastCloneDir.takeIf { it.isNotBlank() }
+            ?.let { LocalFileSystem.getInstance().findFileByPath(it) }
         val chosen = FileChooserFactory.getInstance()
             .createFileChooser(descriptor, project, this)
-            .choose(project)
+            .choose(project, *listOfNotNull(toSelect).toTypedArray())
         val dir = chosen.firstOrNull() ?: return null
+        settings.lastCloneDir = dir.path
         return File(dir.path)
     }
 }

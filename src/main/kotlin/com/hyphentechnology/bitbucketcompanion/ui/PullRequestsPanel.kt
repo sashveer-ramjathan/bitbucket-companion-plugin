@@ -178,7 +178,6 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
             "Creating Pull Request",
             action = { client.createPullRequest(repo, dialog.titleValue, dialog.sourceValue, dialog.destValue.ifBlank { "main" }, dialog.descriptionValue) },
             onSuccess = { pr ->
-                settings.lastPrDescription = dialog.descriptionValue
                 BackgroundTasks.notifyInfo(project, "Created PR #${pr.id}: ${pr.htmlUrl ?: ""}")
                 refreshList()
             },

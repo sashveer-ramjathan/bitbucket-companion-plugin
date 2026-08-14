@@ -1,5 +1,7 @@
 # Bitbucket Companion
 
+[![Build](https://github.com/sashveer-ramjathan/bitbucket-companion-plugin/actions/workflows/build.yml/badge.svg)](https://github.com/sashveer-ramjathan/bitbucket-companion-plugin/actions/workflows/build.yml)
+
 An IntelliJ IDEA plugin that gives the Bitbucket Cloud workflow this team already scripted in
 [`bb.py`](https://github.com/sashveer-ramjathan) a real GUI: browse and clone repos, see git
 status and pull/branch/commit/push per repo, create and watch pull requests, and browse
@@ -85,6 +87,21 @@ Don't stack new work on top of a red pipeline.
 Architecture notes, command-to-GUI mapping, and design trade-offs are documented inline in the
 source (KDoc on every public class/function) - start with `BitbucketApiClient.kt` (HTTP/API
 layer) and `GitOps.kt` (git subprocess layer).
+
+## Contributing
+
+- **Found a bug or something behaving oddly?** Open an [issue](../../issues/new) - include what
+  you did, what you expected, and what happened instead. A screenshot of the tool window helps
+  for UI issues.
+- **Have an idea or want something added?** Open an [issue](../../issues/new) describing the use
+  case (not just the feature) - what workflow it'd replace or unblock. Feature requests and bugs
+  share the same tracker; no special label required to start.
+- **Want to submit a change yourself?** Fork the repo, branch off `master`, and open a pull
+  request. `master` is protected - direct pushes and merges require a PR with at least one
+  approval (repo admins can bypass this; that's intentional, not a bug you need to work around).
+  The `Build` workflow (compile + tests) runs automatically on every PR - keep it green.
+- Follow the existing code style: KDoc on public classes/functions, and see
+  `.claude/skills/dev-cycle/` for the commit → push → watch-CI loop this repo uses.
 
 ## License
 

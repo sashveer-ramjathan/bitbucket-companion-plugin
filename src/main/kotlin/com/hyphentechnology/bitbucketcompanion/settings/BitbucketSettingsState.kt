@@ -33,7 +33,6 @@ class BitbucketSettingsState : PersistentStateComponent<BitbucketSettingsState.S
         var lastRepo: String = ""
         var lastProjectFilter: String = ""
         var lastCloneDir: String = ""
-        var lastPrDescription: String = ""
     }
 
     private var myState = State()
