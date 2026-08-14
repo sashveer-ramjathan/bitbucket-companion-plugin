@@ -21,6 +21,8 @@ import java.awt.BorderLayout
 import java.awt.Desktop
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.net.URI
 import javax.swing.Action
 import javax.swing.BorderFactory
@@ -84,6 +86,11 @@ class PrDetailDialog(
         title = "PR #${pr.id}: ${pr.title}"
         setOKButtonText("Close")
         init()
+        commitsTable.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.clickCount == 2) openSelectedCommitDetail()
+            }
+        })
         loadFiles()
         loadCommits()
         loadComments()
@@ -112,6 +119,7 @@ class PrDetailDialog(
         }
 
         val commitsToolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+            add(JButton("View Details...").apply { addActionListener { openSelectedCommitDetail() } })
             add(JButton("Open in Browser").apply { addActionListener { openSelectedCommitInBrowser() } })
             add(JButton("Refresh").apply { addActionListener { loadCommits() } })
             add(commitsStatusLabel)
@@ -190,6 +198,15 @@ class PrDetailDialog(
         }
         runCatching { Desktop.getDesktop().browse(URI(url)) }
             .onFailure { BackgroundTasks.notifyError(project, "Couldn't open browser: ${it.message}") }
+    }
+
+    private fun openSelectedCommitDetail() {
+        val row = commitsTable.selectedRow
+        if (row < 0 || row >= currentCommits.size) {
+            BackgroundTasks.notifyError(project, "Select a commit first.")
+            return
+        }
+        CommitDetailDialog(project, client, repoSlug, currentCommits[row]).show()
     }
 
     private fun loadComments() {
