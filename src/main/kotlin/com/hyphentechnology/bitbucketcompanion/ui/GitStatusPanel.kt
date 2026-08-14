@@ -14,10 +14,12 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.table.JBTable
 import java.awt.BorderLayout
 import java.awt.FlowLayout
+import java.awt.event.MouseEvent
 import java.io.File
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.table.DefaultTableModel
+import javax.swing.table.JTableHeader
 
 /**
  * Local / Git Status tab - covers bb.py's `status`/`pull-all`/`pull`/`branch`/`branches`/
@@ -26,10 +28,25 @@ import javax.swing.table.DefaultTableModel
 class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
 
     private val columns = arrayOf("Repo", "Branch", "Status", "Dirty", "Detail")
+    private val columnTooltips = arrayOf(
+        "Repository folder name",
+        "Current local branch (git rev-parse --abbrev-ref HEAD)",
+        "Ahead/behind relative to the upstream branch after fetching - or fetch-fail/no-upstream if git couldn't compare",
+        "\"yes\" if the working tree has uncommitted changes (tracked or untracked)",
+        "Extra detail when Status isn't a clean result - e.g. the git error behind a fetch-fail",
+    )
     private val tableModel = object : DefaultTableModel(columns, 0) {
         override fun isCellEditable(row: Int, column: Int) = false
     }
-    private val table = JBTable(tableModel)
+    private val table = JBTable(tableModel).apply {
+        tableHeader = object : JTableHeader(columnModel) {
+            override fun getToolTipText(event: MouseEvent): String? {
+                val viewColumn = columnModel.getColumnIndexAtX(event.point.x)
+                val modelColumn = table.convertColumnIndexToModel(viewColumn)
+                return columnTooltips.getOrNull(modelColumn)
+            }
+        }
+    }
 
     /**
      * Bitbucket's credential.helper (see bb.py) resolves auth from a `$BB_TOKEN` env var at the
