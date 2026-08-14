@@ -62,6 +62,7 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
             add(JButton("Refresh").apply { addActionListener { refreshList() } })
             add(JButton("New PR...").apply { addActionListener { createPr() } })
             add(JButton("Edit...").apply { addActionListener { editSelected() } })
+            add(JButton("View Details...").apply { addActionListener { openDetail() } })
             add(JButton("Open in Browser").apply { addActionListener { openSelectedInBrowser() } })
         }
 
@@ -254,6 +255,16 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
                 refreshList()
             },
         )
+    }
+
+    private fun openDetail() {
+        val pr = selectedPr() ?: run {
+            BackgroundTasks.notifyError(project, "Select a PR first.")
+            return
+        }
+        val repo = repoText()
+        val client = BackgroundTasks.buildApiClient(project) ?: return
+        PrDetailDialog(project, client, repo, pr).show()
     }
 
     private fun openSelectedInBrowser() {
