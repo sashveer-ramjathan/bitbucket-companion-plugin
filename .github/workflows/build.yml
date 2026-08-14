@@ -1,14 +1,12 @@
-# Builds, tests, and verifies the plugin on every push to main and every pull request.
+# Builds and tests the plugin on every push to master and every pull request - kept fast for a
+# tight dev-cycle loop.
 #
-# The Plugin Verifier check (`verifyPlugin`) downloads a full target IDE per version it checks
-# against - the first run after a platformVersion/pluginVerifierIdeVersions bump is genuinely
-# slow, but that download lands in Gradle's own dependency cache (under GRADLE_USER_HOME), which
-# gradle/actions/setup-gradle persists across runs via GitHub Actions cache. The verify job below
-# deliberately does NOT set cache-read-only, unlike the test job - it needs to be able to WRITE
-# to that cache the first time, or every single run pays the full download cost again. Once
-# warm, verifyPlugin only re-runs the actual (fast) bytecode/API compatibility analysis against
-# the already-downloaded IDE, which is what keeps this in the fast per-push loop instead of
-# being deferred to release time - full accuracy, not a lighter proxy check.
+# The Plugin Verifier check (`verifyPlugin`) lives in release.yml instead, not here. It was
+# tried in this fast loop with cache-read-only removed on the theory that a warmed Gradle cache
+# would make repeat runs quick - in practice it stayed at ~10+ minutes even on runs that should
+# have hit a warm cache (its IDE downloads apparently don't land somewhere gradle/actions/
+# setup-gradle actually persists). Rather than keep sinking dev-cycle time chasing that, it's a
+# pre-ship concern and belongs at release time, not on every commit.
 # Adapted from JetBrains' intellij-platform-plugin-template build workflow.
 name: Build
 
@@ -75,33 +73,3 @@ jobs:
         with:
           name: tests-result
           path: build/reports/tests
-
-  verify:
-    name: Verify Plugin
-    needs: [ build ]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fetch Sources
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-
-      # No cache-read-only here (unlike the test job) - this job downloads its own target IDE
-      # that nothing else in this workflow touches, so it needs write access to actually warm
-      # that cache. See the file header comment for why.
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Run Plugin Verifier
-        run: ./gradlew verifyPlugin
-
-      - name: Upload verifier reports on failure
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: verifier-reports
-          path: build/reports/pluginVerifier
