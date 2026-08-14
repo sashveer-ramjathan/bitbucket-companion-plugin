@@ -13,6 +13,11 @@
     <!-- Shown on this plugin's card in Settings > Plugins. Keep this in sync with each tagged
          release - newest first - alongside the pluginVersion bump in gradle.properties. -->
     <change-notes><![CDATA[
+    <p><b>0.1.5</b></p>
+    <ul>
+        <li>Fixed the PR detail view's "Loading Changed Files"/"Loading Comments" failing with a JsonNull cast error on added/removed files and general comments</li>
+        <li>Added this plugin's icon and change notes, shown on its Settings > Plugins card</li>
+    </ul>
     <p><b>0.1.4</b></p>
     <ul>
         <li>New PR detail view: description, changed files, native side-by-side diff viewer, view/post comments</li>
