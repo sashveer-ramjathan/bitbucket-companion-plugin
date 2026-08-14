@@ -1,6 +1,7 @@
 package com.hyphentechnology.bitbucketcompanion.ui
 
 import com.hyphentechnology.bitbucketcompanion.api.BbPullRequest
+import com.hyphentechnology.bitbucketcompanion.api.BitbucketApiClient
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsState
 import com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks
 import com.intellij.openapi.project.Project
@@ -187,13 +188,22 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
             BackgroundTasks.notifyError(project, "Enter a repo slug first.")
             return
         }
-        val dialog = PrDialog(project, isCreate = true, initialDest = settings.defaultDestBranch.ifBlank { "main" })
+        val client = BackgroundTasks.buildApiClient(project) ?: return
+        BackgroundTasks.runBackground(
+            project,
+            "Loading Branches",
+            action = { client.listBranches(repo) },
+            onSuccess = { branches -> openCreateDialog(repo, client, branches) },
+        )
+    }
+
+    private fun openCreateDialog(repo: String, client: BitbucketApiClient, branches: List<String>) {
+        val dialog = PrDialog(project, isCreate = true, branches = branches, initialDest = settings.defaultDestBranch.ifBlank { "main" })
         if (!dialog.showAndGet()) return
         if (dialog.titleValue.isBlank() || dialog.sourceValue.isBlank()) {
             BackgroundTasks.notifyError(project, "Title and source branch are required.")
             return
         }
-        val client = BackgroundTasks.buildApiClient(project) ?: return
         BackgroundTasks.runBackground(
             project,
             "Creating Pull Request",
@@ -211,15 +221,25 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
             return
         }
         val repo = repoText()
+        val client = BackgroundTasks.buildApiClient(project) ?: return
+        BackgroundTasks.runBackground(
+            project,
+            "Loading Branches",
+            action = { client.listBranches(repo) },
+            onSuccess = { branches -> openEditDialog(repo, pr, client, branches) },
+        )
+    }
+
+    private fun openEditDialog(repo: String, pr: BbPullRequest, client: BitbucketApiClient, branches: List<String>) {
         val dialog = PrDialog(
             project,
             isCreate = false,
+            branches = branches,
             initialTitle = pr.title,
             initialDest = pr.destBranch ?: settings.defaultDestBranch.ifBlank { "main" },
             initialDescription = pr.description ?: "",
         )
         if (!dialog.showAndGet()) return
-        val client = BackgroundTasks.buildApiClient(project) ?: return
         BackgroundTasks.runBackground(
             project,
             "Updating Pull Request",

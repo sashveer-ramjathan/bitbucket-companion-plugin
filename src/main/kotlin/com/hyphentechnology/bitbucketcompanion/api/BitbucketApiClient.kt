@@ -138,6 +138,12 @@ class BitbucketApiClient(
         }.toList()
     }
 
+    /** Lists branch names for a repo - used to populate source/destination pickers when opening/editing a PR. */
+    fun listBranches(repoSlug: String): List<String> =
+        paginate("$API/repositories/$workspace/$repoSlug/refs/branches?pagelen=100")
+            .map { it.get("name").asString }
+            .toList()
+
     /** Resolves the browser-facing URL for a single repo. */
     fun repoUrl(repoSlug: String): String {
         val r = request("GET", "$API/repositories/$workspace/$repoSlug")
