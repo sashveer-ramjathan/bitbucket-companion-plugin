@@ -6,6 +6,7 @@ import com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsState
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
@@ -41,17 +42,28 @@ object BackgroundTasks {
      * an additional, optional hook for callers that want the error to also show up somewhere
      * more durable than a balloon that's gone in a few seconds - e.g. a status label in a
      * dialog, so a screenshot taken a moment later still shows what actually happened.
+     *
+     * Uses [ModalityState.any] for the completion callback rather than the default (captured at
+     * call time). Without it, kicking off a load from a modal dialog's constructor - before
+     * .show() actually enters its nested event loop - queues the completion under whatever
+     * modality was active *before* the dialog opened, and it then sits frozen until something
+     * else (e.g. a manual Refresh click, itself dispatched inside the dialog's own modal state)
+     * unblocks the queue. any() makes the callback eligible to run under any modality, including
+     * the dialog's own, so it actually fires while the dialog is open and loading.
      */
     fun <T> runBackground(project: Project?, title: String, action: () -> T, onSuccess: (T) -> Unit, onFailure: (Throwable) -> Unit = {}) {
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, title, true) {
             override fun run(indicator: ProgressIndicator) {
                 val result = runCatching(action)
-                ApplicationManager.getApplication().invokeLater {
-                    result.fold(
-                        onSuccess = onSuccess,
-                        onFailure = { e -> notifyError(project, "$title failed: ${e.message}"); onFailure(e) },
-                    )
-                }
+                ApplicationManager.getApplication().invokeLater(
+                    {
+                        result.fold(
+                            onSuccess = onSuccess,
+                            onFailure = { e -> notifyError(project, "$title failed: ${e.message}"); onFailure(e) },
+                        )
+                    },
+                    ModalityState.any(),
+                )
             }
         })
     }
