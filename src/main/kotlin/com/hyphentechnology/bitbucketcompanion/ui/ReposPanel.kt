@@ -64,7 +64,7 @@ class ReposPanel(private val project: Project?) : JPanel(BorderLayout()) {
         add(toolbar, BorderLayout.NORTH)
         add(split, BorderLayout.CENTER)
 
-        if (settings.workspace.isNotBlank() && settings.email.isNotBlank() && !BitbucketCredentials.getToken().isNullOrBlank()) {
+        if (settings.hasIdentity() && !BitbucketCredentials.getToken().isNullOrBlank()) {
             refresh()
         }
     }

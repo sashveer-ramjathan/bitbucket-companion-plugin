@@ -40,7 +40,8 @@ data class BbPipelineStep(val uuid: String, val name: String, val stateName: Str
  */
 class BitbucketApiClient(
     private val workspace: String,
-    private val email: String,
+    /** Either the Atlassian account email or the Bitbucket username - Basic auth accepts both as the identity half of email/username:token. */
+    private val identity: String,
     private val token: String,
 ) {
     companion object {
@@ -53,7 +54,7 @@ class BitbucketApiClient(
         .build()
 
     private fun authHeader(): String =
-        "Basic " + Base64.getEncoder().encodeToString("$email:$token".toByteArray(Charsets.UTF_8))
+        "Basic " + Base64.getEncoder().encodeToString("$identity:$token".toByteArray(Charsets.UTF_8))
 
     private fun request(method: String, url: String, body: String? = null): JsonObject {
         val builder = HttpRequest.newBuilder(URI.create(url))

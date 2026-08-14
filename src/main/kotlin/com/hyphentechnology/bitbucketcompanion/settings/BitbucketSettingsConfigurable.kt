@@ -20,6 +20,7 @@ class BitbucketSettingsConfigurable : Configurable {
 
     private val workspaceField = JBTextField()
     private val emailField = JBTextField()
+    private val usernameField = JBTextField()
     private val tokenField = JBPasswordField()
     private val authorNameField = JBTextField()
     private val authorEmailField = JBTextField()
@@ -33,6 +34,10 @@ class BitbucketSettingsConfigurable : Configurable {
             group("Bitbucket Cloud Credentials") {
                 row("Workspace:") { cell(workspaceField).align(AlignX.FILL) }
                 row("Atlassian account email:") { cell(emailField).align(AlignX.FILL) }
+                row("Bitbucket username:") { cell(usernameField).align(AlignX.FILL) }
+                row {
+                    comment("Fill in either email or username - username is used if both are set. Either works as the Basic-auth identity paired with the token below.")
+                }
                 row("API token:") { cell(tokenField).align(AlignX.FILL) }
                 row {
                     button("Test Connection") { testConnection() }
@@ -54,15 +59,15 @@ class BitbucketSettingsConfigurable : Configurable {
 
     private fun testConnection() {
         val ws = workspaceField.text.trim()
-        val email = emailField.text.trim()
+        val identity = usernameField.text.trim().ifBlank { emailField.text.trim() }
         val token = String(tokenField.password)
-        if (ws.isEmpty() || email.isEmpty() || token.isEmpty()) {
-            Messages.showErrorDialog("Fill in workspace, email, and token first.", "Bitbucket Companion")
+        if (ws.isEmpty() || identity.isEmpty() || token.isEmpty()) {
+            Messages.showErrorDialog("Fill in workspace, an email or username, and token first.", "Bitbucket Companion")
             return
         }
         ProgressManager.getInstance().run(object : Task.Modal(null, "Testing Bitbucket Connection", true) {
             override fun run(indicator: ProgressIndicator) {
-                val result = runCatching { BitbucketApiClient(ws, email, token).ping() }
+                val result = runCatching { BitbucketApiClient(ws, identity, token).ping() }
                 ApplicationManager.getApplication().invokeLater {
                     result.fold(
                         onSuccess = { Messages.showInfoMessage("Auth OK - workspace '$ws' reachable.", "Bitbucket Companion") },
@@ -82,6 +87,7 @@ class BitbucketSettingsConfigurable : Configurable {
     override fun isModified(): Boolean =
         workspaceField.text.trim() != state.workspace ||
             emailField.text.trim() != state.email ||
+            usernameField.text.trim() != state.username ||
             String(tokenField.password) != (BitbucketCredentials.getToken() ?: "") ||
             authorNameField.text.trim() != state.gitAuthorName ||
             authorEmailField.text.trim() != state.gitAuthorEmail ||
@@ -91,6 +97,7 @@ class BitbucketSettingsConfigurable : Configurable {
     override fun apply() {
         state.workspace = workspaceField.text.trim()
         state.email = emailField.text.trim()
+        state.username = usernameField.text.trim()
         state.gitAuthorName = authorNameField.text.trim()
         state.gitAuthorEmail = authorEmailField.text.trim()
         state.defaultDestBranch = destBranchField.text.trim().ifEmpty { "main" }
@@ -105,6 +112,7 @@ class BitbucketSettingsConfigurable : Configurable {
     override fun reset() {
         workspaceField.text = state.workspace
         emailField.text = state.email
+        usernameField.text = state.username
         tokenField.text = BitbucketCredentials.getToken() ?: ""
         authorNameField.text = state.gitAuthorName
         authorEmailField.text = state.gitAuthorEmail

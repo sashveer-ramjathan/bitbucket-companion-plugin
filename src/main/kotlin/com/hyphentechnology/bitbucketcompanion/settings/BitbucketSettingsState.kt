@@ -20,7 +20,11 @@ class BitbucketSettingsState : PersistentStateComponent<BitbucketSettingsState.S
 
     class State {
         var workspace: String = ""
+
+        // Auth identity: either works as the Basic-auth username half alongside the API token.
+        // Username is preferred when both are set (see BackgroundTasks.buildApiClient).
         var email: String = ""
+        var username: String = ""
 
         // Git commit identity override for the Commit action; blank = fall back to global `git config`
         var gitAuthorName: String = ""
@@ -33,6 +37,12 @@ class BitbucketSettingsState : PersistentStateComponent<BitbucketSettingsState.S
         var lastRepo: String = ""
         var lastProjectFilter: String = ""
         var lastCloneDir: String = ""
+
+        /** The Basic-auth identity to pair with the API token - username if set, else email. */
+        fun authIdentity(): String = username.ifBlank { email }
+
+        /** True once there's enough to attempt authenticating: workspace + (username or email). */
+        fun hasIdentity(): Boolean = workspace.isNotBlank() && authIdentity().isNotBlank()
     }
 
     private var myState = State()

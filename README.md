@@ -55,7 +55,9 @@ boundary, not a limitation of this setup.
 ## Setting up credentials
 
 1. **Settings/Preferences → Tools → Bitbucket Companion**
-2. Fill in your Bitbucket **workspace**, your **Atlassian account email**, and an **API token**
+2. Fill in your Bitbucket **workspace**, either your **Atlassian account email** or your
+   **Bitbucket username** (both work as the Basic-auth identity paired with the token - username
+   is used if you fill in both), and an **API token**
    (see [Atlassian's API token docs](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/)).
    Required token scopes: `read:repository`, `write:repository`, `read:pullrequest`,
    `write:pullrequest`, `read:pipeline` (add `write:pipeline` to trigger/stop pipelines from
