@@ -48,6 +48,18 @@ class BitbucketSettingsState : PersistentStateComponent<BitbucketSettingsState.S
         var slugIncludeFilter: String = ""
         var slugExcludeFilter: String = ""
 
+        // "Sign in with Bitbucket" (OAuth) - the alternative to the manual API token above, once
+        // an OAuth consumer is registered for this workspace (see BitbucketOAuthClient). Only the
+        // Key (client ID) lives here; the Secret and the access/refresh tokens themselves are all
+        // in PasswordSafe (see BitbucketCredentials) - this is just the non-secret expiry so
+        // BitbucketOAuthClient.currentAccessToken() can tell a cached token is still good without
+        // hitting the network.
+        var oauthClientId: String = ""
+        var oauthAccessTokenExpiresAtEpochSec: Long = 0
+
+        /** True once a sign-in has actually completed and stored a refresh token - not just that Key/Secret are filled in. */
+        fun isOAuthSignedIn(): Boolean = !BitbucketCredentials.getOAuthRefreshToken().isNullOrBlank()
+
         /**
          * The Basic-auth identity to try first: whichever previously proved to actually work
          * (see [resolvedIdentity]), else username, else email. See [fallbackIdentity] for the

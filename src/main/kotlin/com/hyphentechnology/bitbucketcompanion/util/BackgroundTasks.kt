@@ -1,7 +1,9 @@
 package com.hyphentechnology.bitbucketcompanion.util
 
 import com.hyphentechnology.bitbucketcompanion.api.BitbucketApiClient
+import com.hyphentechnology.bitbucketcompanion.api.BitbucketAuth
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketCredentials
+import com.hyphentechnology.bitbucketcompanion.settings.BitbucketOAuthClient
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsState
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -22,23 +24,32 @@ object BackgroundTasks {
     private const val NOTIFICATION_GROUP_ID = "Bitbucket Companion"
 
     /**
-     * Builds an API client from the current Settings + stored token, or returns null (after
-     * notifying the user) if workspace/token/identity (username or email) aren't fully
-     * configured yet.
+     * Builds an API client from the current Settings, or returns null (after notifying the user)
+     * if neither auth method is fully configured yet. Prefers a completed Bitbucket sign-in
+     * (OAuth) over the manual API token when both happen to be present.
      */
     fun buildApiClient(project: Project?): BitbucketApiClient? {
         val state = BitbucketSettingsState.getInstance().state
+        if (state.workspace.isBlank()) {
+            notifyError(project, "Bitbucket Companion isn't configured yet - set the workspace in Settings > Tools > Bitbucket Companion.")
+            return null
+        }
+        if (state.isOAuthSignedIn()) {
+            return BitbucketApiClient(state.workspace, BitbucketAuth.Bearer { BitbucketOAuthClient.currentAccessToken() })
+        }
         val token = BitbucketCredentials.getToken()
         if (!state.hasIdentity() || token.isNullOrBlank()) {
-            notifyError(project, "Bitbucket Companion isn't configured yet - set workspace, username or email, and token in Settings > Tools > Bitbucket Companion.")
+            notifyError(project, "Bitbucket Companion isn't configured yet - either sign in with Bitbucket, or set username/email and an API token, in Settings > Tools > Bitbucket Companion.")
             return null
         }
         return BitbucketApiClient(
             state.workspace,
-            state.authIdentity(),
-            token,
-            fallbackIdentity = state.fallbackIdentity(),
-            onIdentityResolved = { working -> state.resolvedIdentity = working },
+            BitbucketAuth.Basic(
+                identity = state.authIdentity(),
+                secret = token,
+                fallbackIdentity = state.fallbackIdentity(),
+                onIdentityResolved = { working -> state.resolvedIdentity = working },
+            ),
         )
     }
 

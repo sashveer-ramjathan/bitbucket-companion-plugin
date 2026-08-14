@@ -68,10 +68,34 @@ data class BbCommitDetail(
 data class BbPipeline(val buildNumber: Int, val uuid: String, val stateName: String, val resultName: String?)
 data class BbPipelineStep(val uuid: String, val name: String, val stateName: String, val resultName: String?)
 
+/** How a [BitbucketApiClient] authenticates - the manual API token, or an OAuth ("Sign in with Bitbucket") access token. */
+sealed interface BitbucketAuth {
+    /**
+     * Basic auth: `identity:secret`, where identity is the Atlassian email or Bitbucket username
+     * and secret is the API token. Bitbucket only accepts one of email/username on a given
+     * workspace, so [fallbackIdentity] (the other one, if both are configured) is retried once on
+     * a 401; whichever succeeds is reported via [onIdentityResolved] so the caller can remember it.
+     */
+    data class Basic(
+        val identity: String,
+        val secret: String,
+        val fallbackIdentity: String? = null,
+        val onIdentityResolved: (String) -> Unit = {},
+    ) : BitbucketAuth
+
+    /**
+     * Bearer auth via an OAuth access token. [tokenProvider] is invoked at request time (not
+     * eagerly) and may block/hit the network to refresh an expired token - safe since every
+     * caller already runs off the EDT (see BackgroundTasks.runBackground).
+     */
+    data class Bearer(val tokenProvider: () -> String) : BitbucketAuth
+}
+
 /**
  * Kotlin port of bb.py's request/auth/pagination logic - same Basic-auth-with-email+token
- * scheme, same `next`-link pagination. All calls are synchronous/blocking; callers MUST run
- * them off the EDT (see Task.Backgroundable usages in the UI layer).
+ * scheme, same `next`-link pagination, plus an OAuth Bearer mode bb.py never needed. All calls
+ * are synchronous/blocking; callers MUST run them off the EDT (see Task.Backgroundable usages in
+ * the UI layer).
  *
  * One deliberate simplification vs. bb.py: pipelineLog() doesn't need bb.py's manual
  * "strip auth header before following the redirect" fix. java.net.http.HttpClient's
@@ -80,13 +104,7 @@ data class BbPipelineStep(val uuid: String, val name: String, val stateName: Str
  */
 class BitbucketApiClient(
     private val workspace: String,
-    /** Either the Atlassian account email or the Bitbucket username - Basic auth accepts both as the identity half of email/username:token. Tried first. */
-    private val identity: String,
-    private val token: String,
-    /** The other of email/username, if both are set - retried once on a 401 before giving up. */
-    private val fallbackIdentity: String? = null,
-    /** Called once a request actually succeeds, with whichever identity worked - lets the caller remember it (see Settings) so future clients start with the right one instead of re-discovering it via a failed request every time. */
-    private val onIdentityResolved: (String) -> Unit = {},
+    private val auth: BitbucketAuth,
 ) {
     companion object {
         private const val API = "https://api.bitbucket.org/2.0"
@@ -97,18 +115,22 @@ class BitbucketApiClient(
         .followRedirects(HttpClient.Redirect.NORMAL)
         .build()
 
-    /** Whichever identity last worked (or [identity], before anything's been tried yet). */
+    /** Whichever Basic-auth identity last worked (or [BitbucketAuth.Basic.identity], before anything's been tried yet). Unused in Bearer mode. */
     @Volatile
-    private var activeIdentity: String = identity
+    private var activeIdentity: String? = (auth as? BitbucketAuth.Basic)?.identity
 
-    private fun authHeader(forIdentity: String): String =
-        "Basic " + Base64.getEncoder().encodeToString("$forIdentity:$token".toByteArray(Charsets.UTF_8))
+    private fun authHeader(forIdentity: String?): String = when (auth) {
+        is BitbucketAuth.Basic -> "Basic " + Base64.getEncoder()
+            .encodeToString("${forIdentity ?: auth.identity}:${auth.secret}".toByteArray(Charsets.UTF_8))
+        is BitbucketAuth.Bearer -> "Bearer ${auth.tokenProvider()}"
+    }
 
     /**
-     * Sends [method] to [url] with [forIdentity]'s Basic auth, returning the raw response - no
-     * status-code handling, so callers can inspect a 401 before deciding whether to retry.
+     * Sends [method] to [url] with [forIdentity]'s Basic auth (ignored in Bearer mode), returning
+     * the raw response - no status-code handling, so callers can inspect a 401 before deciding
+     * whether to retry.
      */
-    private fun send(method: String, url: String, body: String?, forIdentity: String): HttpResponse<String> {
+    private fun send(method: String, url: String, body: String?, forIdentity: String?): HttpResponse<String> {
         val builder = HttpRequest.newBuilder(URI.create(url))
             .header("Authorization", authHeader(forIdentity))
             .timeout(Duration.ofSeconds(30))
@@ -124,20 +146,20 @@ class BitbucketApiClient(
     }
 
     /**
-     * Sends with [activeIdentity]; if that comes back 401 and a distinct [fallbackIdentity] is
-     * configured, retries once with it. Whichever identity actually gets a non-401 response
-     * becomes the new [activeIdentity] and is reported via [onIdentityResolved] - so e.g. a
-     * workspace where only the email half of email/username works self-corrects after one
-     * failed call instead of failing on every single request.
+     * In Basic mode: sends with [activeIdentity]; if that comes back 401 and a distinct
+     * fallbackIdentity is configured, retries once with it, and reports whichever identity
+     * actually got a non-401 response via onIdentityResolved. In Bearer mode: just sends once -
+     * there's no identity ambiguity to retry, an expired/invalid token is a hard failure.
      */
     private fun sendWithFallback(method: String, url: String, body: String?): HttpResponse<String> {
+        val basic = auth as? BitbucketAuth.Basic ?: return send(method, url, body, null)
         val first = send(method, url, body, activeIdentity)
-        val fallback = fallbackIdentity
+        val fallback = basic.fallbackIdentity
         if (first.statusCode() != 401 || fallback == null || fallback == activeIdentity) return first
         val second = send(method, url, body, fallback)
         if (second.statusCode() != 401) {
             activeIdentity = fallback
-            onIdentityResolved(fallback)
+            basic.onIdentityResolved(fallback)
         }
         return second
     }
@@ -151,7 +173,7 @@ class BitbucketApiClient(
         return JsonParser.parseString(resp.body()).asJsonObject
     }
 
-    private fun sendBytes(url: String, forIdentity: String): HttpResponse<ByteArray> {
+    private fun sendBytes(url: String, forIdentity: String?): HttpResponse<ByteArray> {
         val req = HttpRequest.newBuilder(URI.create(url))
             .header("Authorization", authHeader(forIdentity))
             .timeout(Duration.ofSeconds(60))
@@ -161,13 +183,14 @@ class BitbucketApiClient(
     }
 
     private fun requestBytes(url: String): ByteArray {
+        val basic = auth as? BitbucketAuth.Basic
         val first = sendBytes(url, activeIdentity)
-        val fallback = fallbackIdentity
-        val resp = if (first.statusCode() == 401 && fallback != null && fallback != activeIdentity) {
+        val fallback = basic?.fallbackIdentity
+        val resp = if (basic != null && first.statusCode() == 401 && fallback != null && fallback != activeIdentity) {
             val second = sendBytes(url, fallback)
             if (second.statusCode() != 401) {
                 activeIdentity = fallback
-                onIdentityResolved(fallback)
+                basic.onIdentityResolved(fallback)
             }
             second
         } else {
@@ -251,9 +274,11 @@ class BitbucketApiClient(
             ?: "https://bitbucket.org/$workspace/$repoSlug"
     }
 
-    /** Clone URL with the token embedded for auth - only ever used transiently for the clone call itself. */
-    fun cloneUrlWithToken(repoSlug: String): String =
-        "https://x-bitbucket-api-token-auth:$token@bitbucket.org/$workspace/$repoSlug.git"
+    /** Clone URL with credentials embedded for auth - only ever used transiently for the clone call itself. */
+    fun cloneUrlWithToken(repoSlug: String): String = when (auth) {
+        is BitbucketAuth.Basic -> "https://x-bitbucket-api-token-auth:${auth.secret}@bitbucket.org/$workspace/$repoSlug.git"
+        is BitbucketAuth.Bearer -> "https://x-token-auth:${auth.tokenProvider()}@bitbucket.org/$workspace/$repoSlug.git"
+    }
 
     /** Token-free clone URL, written back to `origin` immediately after cloning. */
     fun cloneUrlPlain(repoSlug: String): String =

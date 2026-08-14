@@ -1,12 +1,14 @@
 package com.hyphentechnology.bitbucketcompanion.settings
 
 import com.hyphentechnology.bitbucketcompanion.api.BitbucketApiClient
+import com.hyphentechnology.bitbucketcompanion.api.BitbucketAuth
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.ui.Messages
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.AlignX
@@ -27,11 +29,31 @@ class BitbucketSettingsConfigurable : Configurable {
     private val destBranchField = JBTextField()
     private val watchIntervalField = JBTextField()
 
+    private val oauthClientIdField = JBTextField()
+    private val oauthClientSecretField = JBPasswordField()
+    private val oauthStatusLabel = JBLabel(" ")
+
     override fun getDisplayName(): String = "Bitbucket Companion"
 
     override fun createComponent(): JComponent {
         val built: JPanel = panel {
-            group("Bitbucket Cloud Credentials") {
+            group("Sign in with Bitbucket (recommended once you have workspace access)") {
+                row {
+                    comment(
+                        "Needs an OAuth consumer registered under this workspace's Settings > OAuth consumers " +
+                            "(requires workspace admin) with its Callback URL set to exactly " +
+                            "${BitbucketOAuthClient.CALLBACK_URL} - paste the resulting Key/Secret below."
+                    )
+                }
+                row("OAuth consumer Key:") { cell(oauthClientIdField).align(AlignX.FILL) }
+                row("OAuth consumer Secret:") { cell(oauthClientSecretField).align(AlignX.FILL) }
+                row {
+                    button("Sign In with Bitbucket") { signIn() }
+                    button("Sign Out") { signOut() }
+                    cell(oauthStatusLabel)
+                }
+            }
+            group("Bitbucket Cloud API Token (used only when not signed in above)") {
                 row("Workspace:") { cell(workspaceField).align(AlignX.FILL) }
                 row("Atlassian account email:") { cell(emailField).align(AlignX.FILL) }
                 row("Bitbucket username:") { cell(usernameField).align(AlignX.FILL) }
@@ -57,6 +79,51 @@ class BitbucketSettingsConfigurable : Configurable {
         return built
     }
 
+    /** Workspace is shared by both auth methods, so it stays enabled either way; the API-token-only fields grey out once signed in via OAuth. */
+    private fun updateAuthModeUi() {
+        val signedIn = state.isOAuthSignedIn()
+        oauthStatusLabel.text = if (signedIn) "Signed in to Bitbucket" else "Not signed in"
+        listOf(emailField, usernameField, tokenField).forEach { it.isEnabled = !signedIn }
+    }
+
+    private fun signIn() {
+        val clientId = oauthClientIdField.text.trim()
+        val clientSecret = String(oauthClientSecretField.password)
+        if (clientId.isBlank() || clientSecret.isBlank()) {
+            Messages.showErrorDialog(
+                "Fill in the OAuth consumer Key and Secret first (from Workspace settings > OAuth consumers).",
+                "Bitbucket Companion",
+            )
+            return
+        }
+        ProgressManager.getInstance().run(object : Task.Modal(null, "Signing in to Bitbucket - continue in your browser", true) {
+            override fun run(indicator: ProgressIndicator) {
+                val result = runCatching { BitbucketOAuthClient.login(clientId, clientSecret) }
+                ApplicationManager.getApplication().invokeLater {
+                    result.fold(
+                        onSuccess = { tokens ->
+                            state.oauthClientId = clientId
+                            BitbucketCredentials.setOAuthClientSecret(clientSecret)
+                            BitbucketCredentials.setOAuthAccessToken(tokens.accessToken)
+                            BitbucketCredentials.setOAuthRefreshToken(tokens.refreshToken)
+                            state.oauthAccessTokenExpiresAtEpochSec = System.currentTimeMillis() / 1000 + tokens.expiresInSeconds
+                            updateAuthModeUi()
+                            Messages.showInfoMessage("Signed in to Bitbucket.", "Bitbucket Companion")
+                        },
+                        onFailure = { e -> Messages.showErrorDialog("Sign-in failed: ${e.message}", "Bitbucket Companion") },
+                    )
+                }
+            }
+        })
+    }
+
+    private fun signOut() {
+        BitbucketCredentials.clearOAuthSession()
+        state.oauthAccessTokenExpiresAtEpochSec = 0
+        updateAuthModeUi()
+        Messages.showInfoMessage("Signed out of Bitbucket. Falling back to the API token below, if configured.", "Bitbucket Companion")
+    }
+
     private fun testConnection() {
         val ws = workspaceField.text.trim()
         val username = usernameField.text.trim()
@@ -72,7 +139,8 @@ class BitbucketSettingsConfigurable : Configurable {
         ProgressManager.getInstance().run(object : Task.Modal(null, "Testing Bitbucket Connection", true) {
             override fun run(indicator: ProgressIndicator) {
                 val result = runCatching {
-                    BitbucketApiClient(ws, identity, token, fallbackIdentity = fallback, onIdentityResolved = { workingIdentity = it }).ping()
+                    val auth = BitbucketAuth.Basic(identity, token, fallbackIdentity = fallback, onIdentityResolved = { workingIdentity = it })
+                    BitbucketApiClient(ws, auth).ping()
                 }
                 ApplicationManager.getApplication().invokeLater {
                     result.fold(
@@ -99,6 +167,8 @@ class BitbucketSettingsConfigurable : Configurable {
             emailField.text.trim() != state.email ||
             usernameField.text.trim() != state.username ||
             String(tokenField.password) != (BitbucketCredentials.getToken() ?: "") ||
+            oauthClientIdField.text.trim() != state.oauthClientId ||
+            String(oauthClientSecretField.password) != (BitbucketCredentials.getOAuthClientSecret() ?: "") ||
             authorNameField.text.trim() != state.gitAuthorName ||
             authorEmailField.text.trim() != state.gitAuthorEmail ||
             destBranchField.text.trim() != state.defaultDestBranch ||
@@ -114,6 +184,7 @@ class BitbucketSettingsConfigurable : Configurable {
         state.workspace = workspaceField.text.trim()
         state.email = newEmail
         state.username = newUsername
+        state.oauthClientId = oauthClientIdField.text.trim()
         state.gitAuthorName = authorNameField.text.trim()
         state.gitAuthorEmail = authorEmailField.text.trim()
         state.defaultDestBranch = destBranchField.text.trim().ifEmpty { "main" }
@@ -123,6 +194,10 @@ class BitbucketSettingsConfigurable : Configurable {
         if (token.isNotBlank()) {
             BitbucketCredentials.setToken(token)
         }
+        val clientSecret = String(oauthClientSecretField.password)
+        if (clientSecret.isNotBlank()) {
+            BitbucketCredentials.setOAuthClientSecret(clientSecret)
+        }
     }
 
     override fun reset() {
@@ -130,9 +205,12 @@ class BitbucketSettingsConfigurable : Configurable {
         emailField.text = state.email
         usernameField.text = state.username
         tokenField.text = BitbucketCredentials.getToken() ?: ""
+        oauthClientIdField.text = state.oauthClientId
+        oauthClientSecretField.text = BitbucketCredentials.getOAuthClientSecret() ?: ""
         authorNameField.text = state.gitAuthorName
         authorEmailField.text = state.gitAuthorEmail
         destBranchField.text = state.defaultDestBranch
         watchIntervalField.text = state.watchIntervalSeconds.toString()
+        updateAuthModeUi()
     }
 }
