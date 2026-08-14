@@ -13,6 +13,14 @@
     <!-- Shown on this plugin's card in Settings > Plugins. Keep this in sync with each tagged
          release - newest first - alongside the pluginVersion bump in gradle.properties. -->
     <change-notes><![CDATA[
+    <p><b>0.1.6</b></p>
+    <ul>
+        <li>New "Sign in with Bitbucket" (OAuth) as an alternative to the manual API token - lets each teammate authenticate with their own Bitbucket account once workspace access exists, with every feature working exactly the same (git operations included). Requires a one-time OAuth consumer registered by a workspace admin - see the README.</li>
+        <li>Fixed the PR detail view getting stuck on "Loading..." until a manual Refresh click (an IntelliJ modality gotcha - background loads kicked off before a modal dialog opens need ModalityState.any() to actually complete while it's open)</li>
+        <li>Added a Commits tab to the PR detail view, and a full commit detail view (message, changed files, native diff per file) opened from it</li>
+        <li>Auth now tries both email and username automatically and remembers whichever one actually works, instead of guessing from which field is filled in</li>
+        <li>Load failures in the PR detail view now show inline (with a Refresh button) instead of only a toast that's gone before you can read it</li>
+    </ul>
     <p><b>0.1.5</b></p>
     <ul>
         <li>Fixed the PR detail view's "Loading Changed Files"/"Loading Comments" failing with a JsonNull cast error on added/removed files and general comments</li>

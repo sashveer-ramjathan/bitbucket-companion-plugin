@@ -14,10 +14,10 @@ Targets IntelliJ IDEA **Community** edition (no Ultimate-only APIs used).
 
 | Area | What it covers |
 |---|---|
-| **Repos** | List/filter repos by project, open or copy a repo's URL, clone one repo or all of them, verify a folder of clones |
-| **Local / Git Status** | Ahead/behind/diverged/dirty status per repo, safe fast-forward-only pull, branch create/list/switch, commit, push |
-| **Pull Requests** | List/filter by state, create, view/edit, check build statuses with live watch, open in browser |
-| **Pipelines** | List recent runs, view/watch steps live, embedded log viewer (ANSI-stripped), open in browser |
+| **Repos** | List/filter repos by project and by slug include/exclude keywords, open or copy a repo's URL, clone one repo or all of them, verify a folder of clones |
+| **Local / Git Status** | Ahead/behind/diverged/dirty status and current branch per repo, safe fast-forward-only pull, branch create/list/switch, commit, push |
+| **Pull Requests** | List/filter by state, create/edit (with source/destination branch dropdowns), check build statuses with live watch, open in browser, and a full **detail view**: description, changed files with IntelliJ's native diff viewer per file, commit history (with its own detail view - message, changed files, diff), and viewing/posting comments |
+| **Pipelines** | List recent runs, view/watch steps live (follows the running step and tails its log automatically), embedded log viewer (ANSI-stripped, optional line-wrap), open in browser |
 
 Every credential/dialog input is remembered (workspace, email, git author identity, default PR
 destination branch, last-used repo/project filter) via IntelliJ's persistent settings - nothing
@@ -54,20 +54,59 @@ boundary, not a limitation of this setup.
 
 ## Setting up credentials
 
+There are two ways to authenticate - pick whichever you currently have access to. Both give you
+every feature; you can switch between them later without losing anything.
+
+### Option A - API token (works today, if you're using someone else's token as a workaround)
+
 1. **Settings/Preferences → Tools → Bitbucket Companion**
 2. Fill in your Bitbucket **workspace**, either your **Atlassian account email** or your
-   **Bitbucket username** (both work as the Basic-auth identity paired with the token - username
-   is used if you fill in both), and an **API token**
+   **Bitbucket username** - fill in both if you're not sure which one authenticates on this
+   workspace; the plugin tries one, automatically falls back to the other on failure, and
+   remembers whichever worked so it doesn't have to rediscover it every time - and an
+   **API token**
    (see [Atlassian's API token docs](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/)).
    Required token scopes: `read:repository`, `write:repository`, `read:pullrequest`,
    `write:pullrequest`, `read:pipeline` (add `write:pipeline` to trigger/stop pipelines from
    elsewhere).
 3. Click **Test Connection** to confirm.
 
-The token is stored via IntelliJ's `PasswordSafe` (OS-level secure storage - Windows Credential
-Manager / macOS Keychain / Secret Service), never written to a plaintext file. Everything else
-(workspace, email, git author overrides, defaults) is stored in IntelliJ's own settings, also
-local to your machine.
+### Option B - Sign in with Bitbucket (OAuth, once you have real workspace access)
+
+Lets everyone sign in with their own Bitbucket account instead of sharing one API token, with no
+loss of functionality - same tool window, same everything, just a different auth method
+underneath.
+
+**One-time setup (needs a workspace admin), before anyone can use this:**
+
+1. In Bitbucket: **Workspace settings → OAuth consumers → Add consumer**.
+2. Name it whatever (e.g. "Bitbucket Companion Plugin"). Set **Callback URL** to exactly
+   `http://localhost:47823/callback` - this has to match verbatim, it's not configurable per-user.
+3. Grant it the same permissions as the API token above: Repositories (Read, Write), Pull
+   requests (Read, Write), Pipelines (Read, and Write if you want trigger/stop from elsewhere).
+4. Save it, then copy the generated **Key** and **Secret** and share them with the team (they're
+   not user-specific - everyone signing in uses the same consumer, they just each get their own
+   access/refresh token pair after signing in with their own account).
+
+**Per-user, after that exists:**
+
+1. **Settings/Preferences → Tools → Bitbucket Companion**, top section, "Sign in with Bitbucket".
+2. Paste in the consumer's **Key** and **Secret** from above.
+3. Click **Sign In with Bitbucket** - your browser opens Bitbucket's consent screen; approve it,
+   and the tab tells you to close it once the plugin's caught the redirect.
+4. The API-token fields below grey out once you're signed in (they're just not used anymore,
+   nothing's deleted) - **Sign Out** re-enables them if you want to switch back.
+
+Access tokens are short-lived and refreshed automatically in the background as needed - you
+won't be prompted to re-authenticate unless the refresh token itself is revoked or expires.
+
+### Where secrets live
+
+The API token, the OAuth consumer secret, and the OAuth access/refresh tokens are all stored via
+IntelliJ's `PasswordSafe` (OS-level secure storage - Windows Credential Manager / macOS Keychain
+/ Secret Service), never written to a plaintext file. Everything else (workspace, email, OAuth
+consumer Key, git author overrides, defaults) is stored in IntelliJ's own settings, also local to
+your machine.
 
 ## Building from source
 
