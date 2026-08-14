@@ -56,6 +56,15 @@ data class BbCommit(
     /** First line of the (often multi-line) commit message. */
     val summary: String get() = message.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: message.trim()
 }
+data class BbCommitDetail(
+    val hash: String,
+    val message: String,
+    val author: String,
+    val date: String,
+    /** First parent's hash - the "old" side when diffing this commit's changes. Null for a repo's root commit. */
+    val parentHash: String?,
+    val htmlUrl: String?,
+)
 data class BbPipeline(val buildNumber: Int, val uuid: String, val stateName: String, val resultName: String?)
 data class BbPipelineStep(val uuid: String, val name: String, val stateName: String, val resultName: String?)
 
@@ -246,15 +255,36 @@ class BitbucketApiClient(
     /** Per-file change summary for a PR: status (added/removed/modified/renamed) and old/new paths. */
     fun diffstat(repoSlug: String, id: Long): List<BbDiffStatEntry> =
         paginate("$API/repositories/$workspace/$repoSlug/pullrequests/$id/diffstat?pagelen=100")
-            .map { d ->
-                BbDiffStatEntry(
-                    status = d.get("status")?.asString ?: "modified",
-                    oldPath = d.objOrNull("old")?.get("path")?.asString,
-                    newPath = d.objOrNull("new")?.get("path")?.asString,
-                    linesAdded = d.get("lines_added")?.asInt ?: 0,
-                    linesRemoved = d.get("lines_removed")?.asInt ?: 0,
-                )
-            }.toList()
+            .map { parseDiffstatEntry(it) }.toList()
+
+    /** Per-file change summary for a single commit (diffed against its first parent). */
+    fun commitDiffstat(repoSlug: String, commitHash: String): List<BbDiffStatEntry> =
+        paginate("$API/repositories/$workspace/$repoSlug/diffstat/$commitHash?pagelen=100")
+            .map { parseDiffstatEntry(it) }.toList()
+
+    private fun parseDiffstatEntry(d: JsonObject): BbDiffStatEntry = BbDiffStatEntry(
+        status = d.get("status")?.asString ?: "modified",
+        oldPath = d.objOrNull("old")?.get("path")?.asString,
+        newPath = d.objOrNull("new")?.get("path")?.asString,
+        linesAdded = d.get("lines_added")?.asInt ?: 0,
+        linesRemoved = d.get("lines_removed")?.asInt ?: 0,
+    )
+
+    /** Full detail for one commit, including its first parent's hash (needed to build a diff against it). */
+    fun getCommit(repoSlug: String, hash: String): BbCommitDetail {
+        val c = request("GET", "$API/repositories/$workspace/$repoSlug/commit/$hash")
+        val parents = c.get("parents")?.takeIf { !it.isJsonNull }?.asJsonArray
+        return BbCommitDetail(
+            hash = c.get("hash")?.asString ?: hash,
+            message = c.get("message")?.asString ?: "",
+            author = c.objOrNull("author")?.objOrNull("user")?.get("display_name")?.asString
+                ?: c.objOrNull("author")?.get("raw")?.asString
+                ?: "?",
+            date = c.get("date")?.asString ?: "",
+            parentHash = parents?.firstOrNull()?.asJsonObject?.get("hash")?.asString,
+            htmlUrl = c.objOrNull("links")?.objOrNull("html")?.get("href")?.asString,
+        )
+    }
 
     /** Raw file content at a specific commit, or null if the file doesn't exist there (added/removed side of a diff). */
     fun fileContentAt(repoSlug: String, commitHash: String, path: String): String? = try {
