@@ -122,6 +122,18 @@ class BitbucketApiClient(
         }
     }
 
+    /**
+     * Like [JsonObject.getAsJsonObject], but treats a field that's present-and-explicitly-null
+     * the same as a missing one. Gson's own getAsJsonObject() throws a ClassCastException on
+     * JsonNull instead of returning null - and Bitbucket routinely sends explicit nulls for
+     * optional relations (diffstat's "old"/"new" on an added/removed file, a comment's "inline"
+     * on a general comment, a pipeline step's "result" while still running).
+     */
+    private fun JsonObject.objOrNull(key: String): JsonObject? {
+        val el = get(key)
+        return if (el == null || el.isJsonNull) null else el.asJsonObject
+    }
+
     private fun normUuid(u: String): String {
         val trimmed = u.trim().trim('{', '}')
         return URLEncoder.encode("{$trimmed}", "UTF-8")
@@ -152,8 +164,8 @@ class BitbucketApiClient(
                 URLEncoder.encode("project.key=\"$projectKey\"", "UTF-8") + "&pagelen=100"
         }
         return paginate(url).map { r ->
-            val project = r.getAsJsonObject("project")?.get("key")?.asString ?: "-"
-            val html = r.getAsJsonObject("links")?.getAsJsonObject("html")?.get("href")?.asString
+            val project = r.objOrNull("project")?.get("key")?.asString ?: "-"
+            val html = r.objOrNull("links")?.objOrNull("html")?.get("href")?.asString
                 ?: "https://bitbucket.org/$workspace/${r.get("slug").asString}"
             BbRepo(r.get("slug").asString, project, html)
         }.toList()
@@ -168,7 +180,7 @@ class BitbucketApiClient(
     /** Resolves the browser-facing URL for a single repo. */
     fun repoUrl(repoSlug: String): String {
         val r = request("GET", "$API/repositories/$workspace/$repoSlug")
-        return r.getAsJsonObject("links")?.getAsJsonObject("html")?.get("href")?.asString
+        return r.objOrNull("links")?.objOrNull("html")?.get("href")?.asString
             ?: "https://bitbucket.org/$workspace/$repoSlug"
     }
 
@@ -227,8 +239,8 @@ class BitbucketApiClient(
             .map { d ->
                 BbDiffStatEntry(
                     status = d.get("status")?.asString ?: "modified",
-                    oldPath = d.getAsJsonObject("old")?.get("path")?.asString,
-                    newPath = d.getAsJsonObject("new")?.get("path")?.asString,
+                    oldPath = d.objOrNull("old")?.get("path")?.asString,
+                    newPath = d.objOrNull("new")?.get("path")?.asString,
                     linesAdded = d.get("lines_added")?.asInt ?: 0,
                     linesRemoved = d.get("lines_removed")?.asInt ?: 0,
                 )
@@ -251,10 +263,10 @@ class BitbucketApiClient(
             .map { c ->
                 BbComment(
                     id = c.get("id").asLong,
-                    author = c.getAsJsonObject("user")?.get("display_name")?.asString ?: "?",
+                    author = c.objOrNull("user")?.get("display_name")?.asString ?: "?",
                     createdOn = c.get("created_on")?.asString ?: "",
-                    raw = c.getAsJsonObject("content")?.get("raw")?.asString ?: "",
-                    inlinePath = c.getAsJsonObject("inline")?.get("path")?.asString,
+                    raw = c.objOrNull("content")?.get("raw")?.asString ?: "",
+                    inlinePath = c.objOrNull("inline")?.get("path")?.asString,
                 )
             }.toList()
 
@@ -264,18 +276,18 @@ class BitbucketApiClient(
         val c = request("POST", "$API/repositories/$workspace/$repoSlug/pullrequests/$id/comments", body.toString())
         return BbComment(
             id = c.get("id").asLong,
-            author = c.getAsJsonObject("user")?.get("display_name")?.asString ?: "?",
+            author = c.objOrNull("user")?.get("display_name")?.asString ?: "?",
             createdOn = c.get("created_on")?.asString ?: "",
-            raw = c.getAsJsonObject("content")?.get("raw")?.asString ?: "",
+            raw = c.objOrNull("content")?.get("raw")?.asString ?: "",
         )
     }
 
     private fun parsePr(pr: JsonObject): BbPullRequest {
-        val source = pr.getAsJsonObject("source")?.getAsJsonObject("branch")?.get("name")?.asString
-        val dest = pr.getAsJsonObject("destination")?.getAsJsonObject("branch")?.get("name")?.asString
-        val sourceCommit = pr.getAsJsonObject("source")?.getAsJsonObject("commit")?.get("hash")?.asString
-        val destCommit = pr.getAsJsonObject("destination")?.getAsJsonObject("commit")?.get("hash")?.asString
-        val html = pr.getAsJsonObject("links")?.getAsJsonObject("html")?.get("href")?.asString
+        val source = pr.objOrNull("source")?.objOrNull("branch")?.get("name")?.asString
+        val dest = pr.objOrNull("destination")?.objOrNull("branch")?.get("name")?.asString
+        val sourceCommit = pr.objOrNull("source")?.objOrNull("commit")?.get("hash")?.asString
+        val destCommit = pr.objOrNull("destination")?.objOrNull("commit")?.get("hash")?.asString
+        val html = pr.objOrNull("links")?.objOrNull("html")?.get("href")?.asString
         return BbPullRequest(
             id = pr.get("id").asLong,
             state = pr.get("state")?.asString ?: "-",
@@ -297,12 +309,12 @@ class BitbucketApiClient(
         val values = page.getAsJsonArray("values") ?: JsonArray()
         return values.map { v ->
             val o = v.asJsonObject
-            val state = o.getAsJsonObject("state")
+            val state = o.objOrNull("state")
             BbPipeline(
                 buildNumber = o.get("build_number").asInt,
                 uuid = o.get("uuid").asString,
                 stateName = state?.get("name")?.asString ?: "-",
-                resultName = state?.getAsJsonObject("result")?.get("name")?.asString,
+                resultName = state?.objOrNull("result")?.get("name")?.asString,
             )
         }
     }
@@ -311,12 +323,12 @@ class BitbucketApiClient(
     fun pipelineSteps(repoSlug: String, pipelineUuid: String): List<BbPipelineStep> {
         val puuid = normUuid(pipelineUuid)
         return paginate("$API/repositories/$workspace/$repoSlug/pipelines/$puuid/steps/").map { s ->
-            val state = s.getAsJsonObject("state")
+            val state = s.objOrNull("state")
             BbPipelineStep(
                 uuid = s.get("uuid").asString,
                 name = s.get("name")?.asString ?: "-",
                 stateName = state?.get("name")?.asString ?: "-",
-                resultName = state?.getAsJsonObject("result")?.get("name")?.asString,
+                resultName = state?.objOrNull("result")?.get("name")?.asString,
             )
         }.toList()
     }
@@ -340,7 +352,7 @@ class BitbucketApiClient(
         return if (buildNumber != null) {
             "https://bitbucket.org/$workspace/$repoSlug/pipelines/results/$buildNumber"
         } else {
-            p.getAsJsonObject("links")?.getAsJsonObject("html")?.get("href")?.asString ?: ""
+            p.objOrNull("links")?.objOrNull("html")?.get("href")?.asString ?: ""
         }
     }
 }
