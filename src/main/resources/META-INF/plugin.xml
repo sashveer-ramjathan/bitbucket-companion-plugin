@@ -10,6 +10,35 @@
     all backed by an Atlassian API token stored in the IDE's secure credential store.
     ]]></description>
 
+    <!-- Shown on this plugin's card in Settings > Plugins. Keep this in sync with each tagged
+         release - newest first - alongside the pluginVersion bump in gradle.properties. -->
+    <change-notes><![CDATA[
+    <p><b>0.1.4</b></p>
+    <ul>
+        <li>New PR detail view: description, changed files, native side-by-side diff viewer, view/post comments</li>
+        <li>PR dialog: source/destination branch dropdowns loaded from the remote, bigger window</li>
+        <li>Blocked editing merged/declined pull requests</li>
+        <li>Pipeline log: line-wrap toggle; Watch Steps now follows the running step and tails its log</li>
+        <li>Toolbars wrap instead of clipping when the tool window is narrow</li>
+        <li>Repos tab: slug include/exclude keyword filters with an active-filters summary</li>
+        <li>Local/Git Status: Branch column and column header tooltips</li>
+    </ul>
+    <p><b>0.1.3</b></p>
+    <ul>
+        <li>git fetch/pull/push now authenticate using the token from Settings, instead of requiring a system BB_TOKEN environment variable</li>
+        <li>Pull Requests/Pipelines: Repo field is now a dropdown populated from the workspace's repo list</li>
+    </ul>
+    <p><b>0.1.2</b></p>
+    <ul>
+        <li>Fixed a plugin.xml typo that silently prevented the tool window, settings page, and notifications from ever registering</li>
+        <li>Tool window moved to the left stripe</li>
+    </ul>
+    <p><b>0.1.1</b></p>
+    <ul>
+        <li>Replaced the borrowed GitHub icon with a Bitbucket-blue tool window icon</li>
+    </ul>
+    ]]></change-notes>
+
     <depends>com.intellij.modules.platform</depends>
 
     <extensions defaultExtensionNs="com.intellij">
