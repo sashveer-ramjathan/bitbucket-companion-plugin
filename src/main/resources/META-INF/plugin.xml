@@ -14,9 +14,8 @@
 
     <extensions defaultExtensionPoint="com.intellij">
         <toolWindow id="Bitbucket Companion"
-                    secondary="true"
                     icon="/icons/toolWindowBitbucket.svg"
-                    anchor="right"
+                    anchor="left"
                     factoryClass="com.hyphentechnology.bitbucketcompanion.ui.BitbucketToolWindowFactory"/>
 
         <applicationConfigurable
