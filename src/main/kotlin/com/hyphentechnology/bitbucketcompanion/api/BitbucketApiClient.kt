@@ -23,8 +23,29 @@ data class BbPullRequest(
     val destBranch: String?,
     val description: String?,
     val htmlUrl: String?,
+    /** Commit hashes on either side - needed to fetch file content for a diff (see [BitbucketApiClient.fileContentAt]). */
+    val sourceCommit: String? = null,
+    val destCommit: String? = null,
 )
 data class BbPrStatus(val state: String, val name: String, val url: String?)
+data class BbDiffStatEntry(
+    val status: String,
+    val oldPath: String?,
+    val newPath: String?,
+    val linesAdded: Int,
+    val linesRemoved: Int,
+) {
+    /** The path to show/use for this entry - the new path unless the file was removed. */
+    val displayPath: String get() = newPath ?: oldPath ?: "(unknown)"
+}
+data class BbComment(
+    val id: Long,
+    val author: String,
+    val createdOn: String,
+    val raw: String,
+    /** Non-null for an inline (per-line) comment; null for a general PR-level comment. */
+    val inlinePath: String? = null,
+)
 data class BbPipeline(val buildNumber: Int, val uuid: String, val stateName: String, val resultName: String?)
 data class BbPipelineStep(val uuid: String, val name: String, val stateName: String, val resultName: String?)
 
@@ -200,9 +221,60 @@ class BitbucketApiClient(
             .map { BbPrStatus(it.get("state").asString, it.get("name").asString, it.get("url")?.takeIf { j -> !j.isJsonNull }?.asString) }
             .toList()
 
+    /** Per-file change summary for a PR: status (added/removed/modified/renamed) and old/new paths. */
+    fun diffstat(repoSlug: String, id: Long): List<BbDiffStatEntry> =
+        paginate("$API/repositories/$workspace/$repoSlug/pullrequests/$id/diffstat?pagelen=100")
+            .map { d ->
+                BbDiffStatEntry(
+                    status = d.get("status")?.asString ?: "modified",
+                    oldPath = d.getAsJsonObject("old")?.get("path")?.asString,
+                    newPath = d.getAsJsonObject("new")?.get("path")?.asString,
+                    linesAdded = d.get("lines_added")?.asInt ?: 0,
+                    linesRemoved = d.get("lines_removed")?.asInt ?: 0,
+                )
+            }.toList()
+
+    /** Raw file content at a specific commit, or null if the file doesn't exist there (added/removed side of a diff). */
+    fun fileContentAt(repoSlug: String, commitHash: String, path: String): String? = try {
+        String(requestBytes("$API/repositories/$workspace/$repoSlug/src/$commitHash/${encodePath(path)}"), Charsets.UTF_8)
+    } catch (e: BitbucketApiException) {
+        if (e.message?.contains("404") == true) null else throw e
+    }
+
+    private fun encodePath(path: String): String =
+        path.split("/").joinToString("/") { URLEncoder.encode(it, "UTF-8") }
+
+    /** Comments on a PR (general and inline), newest-last, excluding soft-deleted ones. */
+    fun listComments(repoSlug: String, id: Long): List<BbComment> =
+        paginate("$API/repositories/$workspace/$repoSlug/pullrequests/$id/comments?pagelen=50")
+            .filter { it.get("deleted")?.asBoolean != true }
+            .map { c ->
+                BbComment(
+                    id = c.get("id").asLong,
+                    author = c.getAsJsonObject("user")?.get("display_name")?.asString ?: "?",
+                    createdOn = c.get("created_on")?.asString ?: "",
+                    raw = c.getAsJsonObject("content")?.get("raw")?.asString ?: "",
+                    inlinePath = c.getAsJsonObject("inline")?.get("path")?.asString,
+                )
+            }.toList()
+
+    /** Posts a new general (non-inline) PR comment. */
+    fun addComment(repoSlug: String, id: Long, text: String): BbComment {
+        val body = JsonObject().apply { add("content", JsonObject().apply { addProperty("raw", text) }) }
+        val c = request("POST", "$API/repositories/$workspace/$repoSlug/pullrequests/$id/comments", body.toString())
+        return BbComment(
+            id = c.get("id").asLong,
+            author = c.getAsJsonObject("user")?.get("display_name")?.asString ?: "?",
+            createdOn = c.get("created_on")?.asString ?: "",
+            raw = c.getAsJsonObject("content")?.get("raw")?.asString ?: "",
+        )
+    }
+
     private fun parsePr(pr: JsonObject): BbPullRequest {
         val source = pr.getAsJsonObject("source")?.getAsJsonObject("branch")?.get("name")?.asString
         val dest = pr.getAsJsonObject("destination")?.getAsJsonObject("branch")?.get("name")?.asString
+        val sourceCommit = pr.getAsJsonObject("source")?.getAsJsonObject("commit")?.get("hash")?.asString
+        val destCommit = pr.getAsJsonObject("destination")?.getAsJsonObject("commit")?.get("hash")?.asString
         val html = pr.getAsJsonObject("links")?.getAsJsonObject("html")?.get("href")?.asString
         return BbPullRequest(
             id = pr.get("id").asLong,
@@ -212,6 +284,8 @@ class BitbucketApiClient(
             destBranch = dest,
             description = pr.get("description")?.takeIf { !it.isJsonNull }?.asString,
             htmlUrl = html,
+            sourceCommit = sourceCommit,
+            destCommit = destCommit,
         )
     }
 
