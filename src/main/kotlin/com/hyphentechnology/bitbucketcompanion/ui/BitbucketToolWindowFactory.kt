@@ -20,7 +20,7 @@ class BitbucketToolWindowFactory : ToolWindowFactory {
         val tabs = com.intellij.ui.components.JBTabbedPane()
 
         tabs.addTab("Repos", ReposPanel(project))
-        tabs.addTab("Local / Git Status", comingSoon("Local / Git Status"))
+        tabs.addTab("Local / Git Status", GitStatusPanel(project))
         tabs.addTab("Pull Requests", comingSoon("Pull Requests"))
         tabs.addTab("Pipelines", comingSoon("Pipelines"))
 
