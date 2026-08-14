@@ -173,6 +173,17 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
                 currentSteps = steps
                 stepTableModel.rowCount = 0
                 steps.forEach { stepTableModel.addRow(arrayOf<Any>(it.name, it.stateName, it.resultName ?: "-")) }
+                if (watchTimer != null) {
+                    // Follow the run: select whichever step is still going (or, once everything's
+                    // done, the last one) and tail its log - otherwise watching just ticks the
+                    // table over while the log panel sits on whatever was clicked minutes ago.
+                    val focusStep = steps.firstOrNull { it.stateName != "COMPLETED" } ?: steps.lastOrNull()
+                    val focusIndex = focusStep?.let { steps.indexOf(it) } ?: -1
+                    if (focusIndex >= 0) {
+                        stepTable.setRowSelectionInterval(focusIndex, focusIndex)
+                        loadLog(pipeline, steps[focusIndex])
+                    }
+                }
                 if (watchTimer != null && steps.isNotEmpty() && steps.all { it.stateName == "COMPLETED" }) {
                     stopWatch()
                     val failed = steps.count { it.resultName != null && it.resultName != "SUCCESSFUL" }
