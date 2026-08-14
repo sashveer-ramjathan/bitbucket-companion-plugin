@@ -1,6 +1,7 @@
 package com.hyphentechnology.bitbucketcompanion.ui
 
 import com.hyphentechnology.bitbucketcompanion.git.GitOps
+import com.hyphentechnology.bitbucketcompanion.settings.BitbucketCredentials
 import com.hyphentechnology.bitbucketcompanion.settings.BitbucketSettingsState
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileChooser.FileChooserFactory
@@ -23,11 +24,21 @@ import javax.swing.table.DefaultTableModel
  */
 class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
 
-    private val columns = arrayOf("Repo", "Status", "Dirty")
+    private val columns = arrayOf("Repo", "Status", "Dirty", "Detail")
     private val tableModel = object : DefaultTableModel(columns, 0) {
         override fun isCellEditable(row: Int, column: Int) = false
     }
     private val table = JBTable(tableModel)
+
+    /**
+     * Bitbucket's credential.helper (see bb.py) resolves auth from a `$BB_TOKEN` env var at the
+     * moment git runs. That works from a shell that sources .bashrc, but IntelliJ - and every
+     * subprocess it spawns, including these - never does. Inject the same token the API calls
+     * already use so `git fetch`/`pull`/`push` authenticate without the user having to set a
+     * system-wide environment variable themselves.
+     */
+    private fun gitEnv(): Map<String, String> =
+        BitbucketCredentials.getToken()?.takeIf { it.isNotBlank() }?.let { mapOf("BB_TOKEN" to it) } ?: emptyMap()
 
     private var currentDir: File? =
         BitbucketSettingsState.getInstance().state.lastCloneDir.takeIf { it.isNotBlank() }?.let { File(it) }
@@ -79,14 +90,15 @@ class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
             project,
             "Checking Repo Status",
             action = {
+                val env = gitEnv()
                 dir.listFiles { f -> f.isDirectory && File(f, ".git").isDirectory }
                     ?.sortedBy { it.name }
-                    ?.map { GitOps.status(it) }
+                    ?.map { GitOps.status(it, env) }
                     ?: emptyList()
             },
             onSuccess = { statuses ->
                 tableModel.rowCount = 0
-                statuses.forEach { tableModel.addRow(arrayOf(it.name, it.state, if (it.dirty) "yes" else "")) }
+                statuses.forEach { tableModel.addRow(arrayOf(it.name, it.state, if (it.dirty) "yes" else "", it.detail)) }
             },
         )
     }
@@ -97,11 +109,12 @@ class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
             project,
             "Pull All",
             action = {
+                val env = gitEnv()
                 val log = StringBuilder()
                 dir.listFiles { f -> f.isDirectory && File(f, ".git").isDirectory }
                     ?.sortedBy { it.name }
                     ?.forEach { repoDir ->
-                        val result = GitOps.pull(repoDir)
+                        val result = GitOps.pull(repoDir, env)
                         log.appendLine("${if (result.ok) "OK" else "SKIP/FAIL"}  ${repoDir.name}: ${(if (result.ok) result.stdout else result.stderr).trim().ifBlank { "done" }}")
                     }
                 log.toString()
@@ -118,7 +131,7 @@ class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
         com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks.runBackground(
             project,
             "Pull ${repoDir.name}",
-            action = { GitOps.pull(repoDir) },
+            action = { GitOps.pull(repoDir, gitEnv()) },
             onSuccess = { result ->
                 if (result.ok) {
                     com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks.notifyInfo(project, "Pulled ${repoDir.name}")
@@ -214,7 +227,7 @@ class GitStatusPanel(private val project: Project?) : JPanel(BorderLayout()) {
         com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks.runBackground(
             project,
             "Pushing",
-            action = { GitOps.push(repoDir) },
+            action = { GitOps.push(repoDir, gitEnv()) },
             onSuccess = { result ->
                 if (result.ok) {
                     com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks.notifyInfo(project, "Pushed ${repoDir.name}")

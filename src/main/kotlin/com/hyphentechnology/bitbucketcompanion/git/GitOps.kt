@@ -56,9 +56,9 @@ object GitOps {
         run(dir, "remote", "set-url", "origin", plainUrl)
 
     /** Fetches, then reports ahead/behind/diverged/up-to-date + dirty state relative to upstream. */
-    fun status(dir: File): RepoStatus {
+    fun status(dir: File, env: Map<String, String> = emptyMap()): RepoStatus {
         val name = dir.name
-        val fetch = run(dir, "fetch", "--quiet")
+        val fetch = run(dir, "fetch", "--quiet", env = env)
         if (!fetch.ok) {
             val err = fetch.stderr.trim().lines().lastOrNull { it.isNotBlank() } ?: "fetch failed"
             return RepoStatus(name, "fetch-fail", dirty = isDirty(dir), detail = err)
@@ -81,9 +81,9 @@ object GitOps {
     }
 
     /** Fast-forward-only pull; refuses (returns a synthetic failure result) if the tree is dirty. */
-    fun pull(dir: File): GitResult {
+    fun pull(dir: File, env: Map<String, String> = emptyMap()): GitResult {
         if (isDirty(dir)) return GitResult(-1, "", "SKIP: uncommitted changes")
-        return run(dir, "pull", "--ff-only", timeoutSeconds = 120)
+        return run(dir, "pull", "--ff-only", timeoutSeconds = 120, env = env)
     }
 
     /** Creates and switches to a new branch. */
@@ -121,14 +121,14 @@ object GitOps {
     }
 
     /** Pushes the current branch, automatically setting the upstream on a first push. */
-    fun push(dir: File): GitResult {
+    fun push(dir: File, env: Map<String, String> = emptyMap()): GitResult {
         val branch = run(dir, "rev-parse", "--abbrev-ref", "HEAD").stdout.trim()
         if (branch.isBlank() || branch == "HEAD") return GitResult(-1, "", "detached HEAD, not on a branch")
         val upstream = run(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
         return if (!upstream.ok) {
-            run(dir, "push", "--set-upstream", "origin", branch, timeoutSeconds = 120)
+            run(dir, "push", "--set-upstream", "origin", branch, timeoutSeconds = 120, env = env)
         } else {
-            run(dir, "push", timeoutSeconds = 120)
+            run(dir, "push", timeoutSeconds = 120, env = env)
         }
     }
 
