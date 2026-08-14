@@ -6,7 +6,6 @@ import com.hyphentechnology.bitbucketcompanion.util.BackgroundTasks
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextField
 import com.intellij.ui.table.JBTable
 import java.awt.BorderLayout
 import java.awt.Desktop
@@ -29,7 +28,10 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
 
     private val settings = BitbucketSettingsState.getInstance().state
 
-    private val repoField = JBTextField(settings.lastRepo, 16)
+    private val repoCombo = JComboBox<String>().apply {
+        isEditable = true
+        settings.lastRepo.takeIf { it.isNotBlank() }?.let { addItem(it); selectedItem = it }
+    }
     private val stateCombo = JComboBox(arrayOf("OPEN", "MERGED", "DECLINED"))
 
     private val prColumns = arrayOf("ID", "State", "Title")
@@ -52,7 +54,7 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
     init {
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
             add(JBLabel("Repo:"))
-            add(repoField)
+            add(repoCombo)
             add(JBLabel("State:"))
             add(stateCombo)
             add(JButton("Refresh").apply { addActionListener { refreshList() } })
@@ -78,15 +80,34 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
         add(toolbar, BorderLayout.NORTH)
         add(split, BorderLayout.CENTER)
 
-        if (repoField.text.isNotBlank()) refreshList()
+        loadRepoOptions()
+        if (repoText().isNotBlank()) refreshList()
+    }
+
+    private fun repoText(): String = (repoCombo.editor.item as? String)?.trim().orEmpty()
+
+    /** Populates the Repo dropdown from the workspace's repo list so users can pick instead of typing a slug. */
+    private fun loadRepoOptions() {
+        val client = BackgroundTasks.buildApiClient(project) ?: return
+        BackgroundTasks.runBackground(
+            project,
+            "Loading Repos",
+            action = { client.listRepos() },
+            onSuccess = { repos ->
+                val current = repoText()
+                repoCombo.removeAllItems()
+                repos.map { it.slug }.sorted().forEach { repoCombo.addItem(it) }
+                repoCombo.selectedItem = current.ifBlank { settings.lastRepo }
+            },
+        )
     }
 
     private fun rememberRepo() {
-        settings.lastRepo = repoField.text.trim()
+        settings.lastRepo = repoText()
     }
 
     private fun refreshList() {
-        val repo = repoField.text.trim()
+        val repo = repoText()
         if (repo.isBlank()) {
             BackgroundTasks.notifyError(project, "Enter a repo slug first.")
             return
@@ -122,7 +143,7 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
     }
 
     private fun loadChecks(pr: BbPullRequest) {
-        val repo = repoField.text.trim()
+        val repo = repoText()
         val client = BackgroundTasks.buildApiClient(project) ?: return
         BackgroundTasks.runBackground(
             project,
@@ -161,7 +182,7 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
     }
 
     private fun createPr() {
-        val repo = repoField.text.trim()
+        val repo = repoText()
         if (repo.isBlank()) {
             BackgroundTasks.notifyError(project, "Enter a repo slug first.")
             return
@@ -189,7 +210,7 @@ class PullRequestsPanel(private val project: Project?) : JPanel(BorderLayout()) 
             BackgroundTasks.notifyError(project, "Select a PR first.")
             return
         }
-        val repo = repoField.text.trim()
+        val repo = repoText()
         val dialog = PrDialog(
             project,
             isCreate = false,

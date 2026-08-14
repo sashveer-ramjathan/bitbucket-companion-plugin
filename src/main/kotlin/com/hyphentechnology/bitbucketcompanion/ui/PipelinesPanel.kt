@@ -16,6 +16,7 @@ import java.awt.Desktop
 import java.awt.FlowLayout
 import java.net.URI
 import javax.swing.JButton
+import javax.swing.JComboBox
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 import javax.swing.Timer
@@ -29,7 +30,10 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
 
     private val settings = BitbucketSettingsState.getInstance().state
 
-    private val repoField = JBTextField(settings.lastRepo, 16)
+    private val repoCombo = JComboBox<String>().apply {
+        isEditable = true
+        settings.lastRepo.takeIf { it.isNotBlank() }?.let { addItem(it); selectedItem = it }
+    }
     private val limitField = JBTextField("10", 4)
 
     private val pipelineColumns = arrayOf("Build #", "State", "Result", "UUID")
@@ -54,7 +58,7 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
     init {
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
             add(JBLabel("Repo:"))
-            add(repoField)
+            add(repoCombo)
             add(JBLabel("Limit:"))
             add(limitField)
             add(JButton("Refresh").apply { addActionListener { refreshPipelines() } })
@@ -83,11 +87,30 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
         add(toolbar, BorderLayout.NORTH)
         add(mainSplit, BorderLayout.CENTER)
 
-        if (repoField.text.isNotBlank()) refreshPipelines()
+        loadRepoOptions()
+        if (repoText().isNotBlank()) refreshPipelines()
+    }
+
+    private fun repoText(): String = (repoCombo.editor.item as? String)?.trim().orEmpty()
+
+    /** Populates the Repo dropdown from the workspace's repo list so users can pick instead of typing a slug. */
+    private fun loadRepoOptions() {
+        val client = BackgroundTasks.buildApiClient(project) ?: return
+        BackgroundTasks.runBackground(
+            project,
+            "Loading Repos",
+            action = { client.listRepos() },
+            onSuccess = { repos ->
+                val current = repoText()
+                repoCombo.removeAllItems()
+                repos.map { it.slug }.sorted().forEach { repoCombo.addItem(it) }
+                repoCombo.selectedItem = current.ifBlank { settings.lastRepo }
+            },
+        )
     }
 
     private fun refreshPipelines() {
-        val repo = repoField.text.trim()
+        val repo = repoText()
         if (repo.isBlank()) {
             BackgroundTasks.notifyError(project, "Enter a repo slug first.")
             return
@@ -132,7 +155,7 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
     }
 
     private fun loadSteps(pipeline: BbPipeline) {
-        val repo = repoField.text.trim()
+        val repo = repoText()
         val client = BackgroundTasks.buildApiClient(project) ?: return
         BackgroundTasks.runBackground(
             project,
@@ -158,7 +181,7 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
     }
 
     private fun loadLog(pipeline: BbPipeline, step: BbPipelineStep) {
-        val repo = repoField.text.trim()
+        val repo = repoText()
         val client = BackgroundTasks.buildApiClient(project) ?: return
         logArea.text = "Loading..."
         BackgroundTasks.runBackground(
@@ -190,7 +213,7 @@ class PipelinesPanel(private val project: Project?) : JPanel(BorderLayout()) {
     }
 
     private fun openSelectedPipelineInBrowser() {
-        val repo = repoField.text.trim()
+        val repo = repoText()
         val pipeline = selectedPipeline() ?: run {
             BackgroundTasks.notifyError(project, "Select a pipeline first.")
             return
