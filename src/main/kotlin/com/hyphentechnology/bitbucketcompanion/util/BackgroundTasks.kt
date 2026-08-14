@@ -35,15 +35,21 @@ object BackgroundTasks {
         return BitbucketApiClient(state.workspace, state.authIdentity(), token)
     }
 
-    /** Runs [action] on a background thread with a progress indicator, then [onSuccess] on the EDT; failures become an error notification. */
-    fun <T> runBackground(project: Project?, title: String, action: () -> T, onSuccess: (T) -> Unit) {
+    /**
+     * Runs [action] on a background thread with a progress indicator, then [onSuccess] on the
+     * EDT. Failures always become an error notification (the existing behavior); [onFailure] is
+     * an additional, optional hook for callers that want the error to also show up somewhere
+     * more durable than a balloon that's gone in a few seconds - e.g. a status label in a
+     * dialog, so a screenshot taken a moment later still shows what actually happened.
+     */
+    fun <T> runBackground(project: Project?, title: String, action: () -> T, onSuccess: (T) -> Unit, onFailure: (Throwable) -> Unit = {}) {
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, title, true) {
             override fun run(indicator: ProgressIndicator) {
                 val result = runCatching(action)
                 ApplicationManager.getApplication().invokeLater {
                     result.fold(
                         onSuccess = onSuccess,
-                        onFailure = { e -> notifyError(project, "$title failed: ${e.message}") },
+                        onFailure = { e -> notifyError(project, "$title failed: ${e.message}"); onFailure(e) },
                     )
                 }
             }

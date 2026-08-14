@@ -49,6 +49,8 @@ class PrDetailDialog(
     }
     private val filesTable = JBTable(filesTableModel)
     private var currentFiles: List<BbDiffStatEntry> = emptyList()
+    private val filesStatusLabel = JBLabel(" ")
+    private val commentsStatusLabel = JBLabel(" ")
 
     private val descriptionArea = JBTextArea(pr.description.orEmpty(), 5, 60).apply {
         isEditable = false
@@ -88,6 +90,8 @@ class PrDetailDialog(
 
         val filesToolbar = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
             add(JButton("View Diff").apply { addActionListener { viewDiffForSelected() } })
+            add(JButton("Refresh").apply { addActionListener { loadFiles() } })
+            add(filesStatusLabel)
         }
         val filesPanel = JPanel(BorderLayout()).apply {
             add(filesToolbar, BorderLayout.NORTH)
@@ -96,6 +100,7 @@ class PrDetailDialog(
         }
 
         val commentsToolbar = JPanel(BorderLayout()).apply {
+            add(commentsStatusLabel, BorderLayout.NORTH)
             add(JBScrollPane(newCommentField), BorderLayout.CENTER)
             add(JButton("Post Comment").apply { addActionListener { postComment() } }, BorderLayout.EAST)
         }
@@ -112,6 +117,7 @@ class PrDetailDialog(
     }
 
     private fun loadFiles() {
+        filesStatusLabel.text = "Loading..."
         BackgroundTasks.runBackground(
             project,
             "Loading Changed Files",
@@ -120,16 +126,23 @@ class PrDetailDialog(
                 currentFiles = entries
                 filesTableModel.rowCount = 0
                 entries.forEach { filesTableModel.addRow(arrayOf<Any>(it.displayPath, it.status, it.linesAdded, it.linesRemoved)) }
+                filesStatusLabel.text = if (entries.isEmpty()) "No changed files reported for this PR." else "${entries.size} file(s) changed"
             },
+            onFailure = { e -> filesStatusLabel.text = "Error: ${e.message}" },
         )
     }
 
     private fun loadComments() {
+        commentsStatusLabel.text = "Loading comments..."
         BackgroundTasks.runBackground(
             project,
             "Loading Comments",
             action = { client.listComments(repoSlug, pr.id) },
-            onSuccess = { comments -> renderComments(comments) },
+            onSuccess = { comments ->
+                renderComments(comments)
+                commentsStatusLabel.text = " "
+            },
+            onFailure = { e -> commentsStatusLabel.text = "Error: ${e.message}" },
         )
     }
 
